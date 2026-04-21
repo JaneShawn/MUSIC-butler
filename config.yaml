@@ -1,0 +1,58 @@
+# 音乐库配置
+library:
+  path: "C:\\Users\\JaneShown\\Desktop\\music"
+  supported_formats: [".flac", ".mp3", ".wav", ".m4a", ".ogg"]
+  
+# RAG配置
+rag:
+  # Embedding模型选择：
+  # - "bge-small-zh" (推荐，中文轻量，速度快)
+  # - "bge-large-zh" (中文高精度，较慢)
+  # - "bge-base-zh" (平衡)
+  # - "paraphrase-multilingual" (多语言)
+  embedding_model: "bge-small-zh"
+  chunk_size: 512
+  top_k: 10
+  
+  # 相似度阈值（0-1），低于此值的结果会被过滤
+  similarity_threshold: 0.5
+  
+  # 运行设备: "cpu" 或 "cuda"（需要GPU支持）
+  device: "cpu"
+  
+# ChromaDB配置
+vector_store:
+  persist_directory: "./data/chroma"
+  collection_name: "music_library"
+  # 继承RAG配置，也可单独指定：
+  # embedding_model: "bge-small-zh"
+  # device: "cpu"
+  
+# Scout Agent配置
+scout:
+  rss_feeds:
+    - "https://rsshub.app/spotify/new-releases/country/TW"
+  reddit_subs:
+    - "indieheads"
+    - "hiphopheads"
+    - "Cpop"
+  check_interval_hours: 24
+  max_candidates_per_run: 20
+  
+# Curator Agent配置
+curator:
+  min_similarity_score: 0.6
+  weekly_report_day: "sunday"
+
+# Organizer Agent配置（文件整理）
+organizer:
+  target_root: "C:\\Users\\JaneShown\\Desktop\\music\\MUSIC"  # 整理后的目标目录
+  default_strategy: "artist/album"  # 默认策略: artist/album, genre/artist, year/artist, artist, album, genre, year
+  filename_template: "{artist} - {title}"  # 文件名模板
+  keep_original: false  # false=移动, true=复制
+  
+# LLM配置
+llm:
+  model: "moonshot-v1-8k"
+  temperature: 0.7
+  max_tokens: 1000

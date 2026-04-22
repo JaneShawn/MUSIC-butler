@@ -408,6 +408,14 @@ class MusicAgentChat:
                     "params": {"indices": multi_indices}
                 }
         
+        # 批量情绪分析（高优先级拦截，避免 LLM 把"分析情绪"误判为 analyze_single_emotion）
+        if any(p in user_input for p in ["分析情绪", "情绪分析", "情绪识别"]):
+            # 排除 "分析XXX的情绪" 这种明确指定歌名的情况
+            import re
+            if not re.search(r'分析.+?的.?情绪', user_input):
+                force = any(w in user_input for w in ["重新", "强制", "刷新", "更新"])
+                return {"intent": "analyze_emotion", "params": {"force": force}}
+        
         # === 2. LLM 语义意图识别（覆盖自然语言无限变体）===
         llm_intent = self._llm_understand_intent(user_input)
         if llm_intent:
@@ -542,6 +550,7 @@ class MusicAgentChat:
 用户："标记BTS为韩语" → {"intent": "correct_language", "params": {"input": "标记BTS为韩语"}}
 用户："Supernatural是韩语" → {"intent": "update_song_info", "params": {"song_hint": "Supernatural", "field": "language", "value": "韩语"}}
 用户："检测Dynamite是什么语言" → {"intent": "detect_single_language", "params": {"song_name": "Dynamite"}}
+用户："分析情绪" → {"intent": "analyze_emotion", "params": {}}
 用户："悲伤歌单" → {"intent": "playlist", "params": {"mode": "emotion", "emotion": "sad"}}
 用户："扫描音乐库" → {"intent": "scan", "params": {}}
 用户："分析我的音乐库" → {"intent": "analyze", "params": {}}
@@ -626,7 +635,7 @@ class MusicAgentChat:
 4. "XX是YY"（没有标记/纠正/修复动词）= update_song_info
 5. "修复XX" = fix_single（修复元数据，不是更新属性）
 6. play_by_name 的 song_name 必须原样保留用户输入的歌名，不要自动添加歌手名，不要加书名号《》，不要根据对话历史修改字词（用户说"程艾影"就返回"程艾影"，不是"程爱影"）
-7. analyze_single_emotion / detect_single_language 必须用户明确说了具体歌名。只说"分析情绪"、"检测语言"没有歌名 → analyze
+7. analyze_single_emotion / detect_single_language 必须用户明确说了具体歌名。只说"分析情绪"没有歌名 → analyze_emotion（批量分析）
 8. 只返回JSON，不要任何解释文字"""
 
         user_prompt = f"""{dialog_history}
@@ -3061,7 +3070,8 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
             if self.context.last_query_results:
                 idx = self._parse_multi_select(song_name, len(self.context.last_query_results))
                 if idx and len(idx) == 1:
-                    target_song = self.context.last_query_results[idx[0] - 1].get("song")
+                    # _parse_multi_select 返回的是 0-based 索引，直接使用
+                    target_song = self.context.last_query_results[idx[0]].get("song")
                 elif not idx and self.context.last_query_results:
                     target_song = self.context.last_query_results[0].get("song")
         

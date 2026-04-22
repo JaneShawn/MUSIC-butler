@@ -534,6 +534,8 @@ class MusicAgentChat:
 用户："周杰伦的歌" → {"intent": "query", "params": {"query": "周杰伦的歌"}}
 用户："播放晴天" → {"intent": "play_by_name", "params": {"song_name": "晴天"}}
 用户："播放周杰伦的歌" → {"intent": "query", "params": {"query": "周杰伦的歌"}}
+用户："播放开心的歌" → {"intent": "playlist", "params": {"mode": "emotion", "emotion": "happy"}}
+用户："有哪些开心的歌曲" → {"intent": "query", "params": {"query": "开心的歌"}}
 用户："有哪些语言" → {"intent": "show_language_stats", "params": {}}
 用户："西班牙语歌有哪些" → {"intent": "query", "params": {"query": "西班牙语歌"}}
 用户："哪首是西班牙语" → {"intent": "query", "params": {"query": "西班牙语歌"}}
@@ -557,8 +559,10 @@ class MusicAgentChat:
   ✓ "推荐一些安静的歌"、"有没有快乐的歌"
   params: {"query": "用户的搜索意图文本"}
 
-- play_by_name: 按名字播放特定歌曲（明确说"播放/听"+歌名）
+- play_by_name: 按名字播放特定歌曲（必须是具体歌名，不是情绪/场景/歌手描述）
   ✓ "播放晴天"、"听Faded"、"放一首稻香"
+  ✗ "播放开心的歌" → playlist（开心是情绪，不是歌名）
+  ✗ "播放周杰伦的歌" → query（用户没指定具体歌名）
 
 - playlist: 创建情绪/场景播放列表
   ✓ "悲伤歌单"、"适合跑步的歌"、"工作时听的"
@@ -2941,8 +2945,25 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
                 best_matches.sort(key=lambda x: x[0], reverse=True)
                 matched_songs = [s for _, s in best_matches[:5]]
         
-        # L3: 降级为 query 搜索（处理 "播放xxx的歌" 被误识别为 play_by_name 的情况）
+        # L3: 降级处理（处理 "播放xxx的歌" 被误识别为 play_by_name 的情况）
         if not matched_songs:
+            # 检测是否包含情绪关键词，直接转 playlist
+            emotion_keywords = {
+                '开心': 'happy', '快乐': 'happy', '悲伤': 'sad', '难过': 'sad',
+                '安静': 'calm', '平静': 'calm', '浪漫': 'romantic', '激情': 'energetic',
+                '燃': 'energetic', '热血': 'energetic', '怀旧': 'nostalgic', '经典': 'nostalgic',
+                '愤怒': 'angry', '专注': 'focus', '工作': 'focus', '派对': 'party', '嗨': 'party',
+            }
+            detected_emotion = None
+            for kw, emo in emotion_keywords.items():
+                if kw in raw_name:
+                    detected_emotion = emo
+                    break
+            
+            if detected_emotion:
+                return self.handle_playlist({"mode": "emotion", "emotion": detected_emotion})
+            
+            # 否则降级为 query 搜索
             query_results = self.librarian.query(raw_name, top_k=5)
             if query_results:
                 self.context.set_query_results(query_results)

@@ -618,6 +618,14 @@ class LibrarianAgent(BaseAgent):
             print(f"  [搜索] 使用语言metadata过滤: {intent['language']}")
             return self._filter_by_language(intent["language"], top_k)
         
+        # 特殊处理：如果有 artist 条件，使用精确匹配（向量搜索对 artist:xxx 语法不可靠）
+        if intent and intent.get("artist"):
+            return self._filter_by_artist(intent, top_k)
+        
+        # 特殊处理：如果有 mood 条件但没有 artist，使用情绪缓存过滤（向量搜索对情绪语义不可靠）
+        if intent and intent.get("mood") and not intent.get("artist"):
+            return self._filter_by_mood(intent["mood"], top_k)
+        
         # 执行向量搜索
         if use_threshold:
             results = self.vector_store.search_with_threshold(
@@ -684,6 +692,148 @@ class LibrarianAgent(BaseAgent):
             print(f"  [搜索] 随机选取 {top_k} 首展示")
         
         return results
+    
+    def _map_mood_to_emotion(self, mood: str) -> Optional[str]:
+        """将中文/英文情绪词映射到情绪标签"""
+        mood_lower = mood.lower().strip()
+        mapping = {
+            'happy': 'happy', '开心': 'happy', '快乐': 'happy', '欢乐': 'happy', '高兴': 'happy', '愉快': 'happy',
+            'sad': 'sad', '悲伤': 'sad', '难过': 'sad', '伤心': 'sad', 'melancholy': 'sad', '哭': 'sad',
+            'energetic': 'energetic', '激情': 'energetic', '燃': 'energetic', '热血': 'energetic', '强烈': 'energetic',
+            'calm': 'calm', '平静': 'calm', '安静': 'calm', '放松': 'calm', '舒缓': 'calm', '轻音乐': 'calm', 'sleepy': 'calm',
+            'romantic': 'romantic', '浪漫': 'romantic', '甜蜜': 'romantic', '温柔': 'romantic', '爱情': 'romantic', '情歌': 'romantic', '心动': 'romantic',
+            'nostalgic': 'nostalgic', '怀旧': 'nostalgic', '经典': 'nostalgic', '回忆': 'nostalgic', '老歌': 'nostalgic', '往日': 'nostalgic',
+            'angry': 'angry', '愤怒': 'angry', '怒': 'angry', '恨': 'angry', 'rage': 'angry',
+            'focus': 'focus', '专注': 'focus', '工作': 'focus', '学习': 'focus', 'background': 'focus',
+            'party': 'party', '派对': 'party', '嗨': 'party', '舞': 'party', 'club': 'party', 'dance': 'party',
+        }
+        return mapping.get(mood_lower)
+    
+    def _filter_by_mood(self, mood: str, top_k: int) -> List[Dict]:
+        """根据情绪标签过滤歌曲（优先用 emotion_cache，不足时 fallback 向量搜索）
+        
+        向量搜索对情绪语义匹配不可靠，"开心"可能返回《画心》。
+        优先使用已分析的真实情绪标签， fallback 到语义搜索。
+        """
+        target_emotion = self._map_mood_to_emotion(mood)
+        if not target_emotion:
+            return []
+        
+        from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+        analyzer = SimpleEmotionAnalyzer()
+        
+        results = []
+        for song_id, song in self.songs.items():
+            cache_key = analyzer._get_file_hash(song.file_path)
+            if cache_key in analyzer._cache:
+                cached = analyzer._cache[cache_key]
+                if cached.get('emotion') == target_emotion:
+                    results.append({
+                        "song": song,
+                        "similarity": cached.get('confidence', 0.5),
+                        "metadata": {"emotion": target_emotion},
+                        "intent": {"mood": mood}
+                    })
+        
+        # 缓存命中不足时，fallback 向量搜索补充
+        if len(results) < top_k:
+            needed = top_k - len(results)
+            fallback = self.vector_store.search(mood, top_k=needed + 10)
+            seen_paths = {r["song"].file_path for r in results}
+            for r in fallback:
+                song = self.songs.get(r.get("id"))
+                if song and song.file_path not in seen_paths:
+                    results.append({
+                        "song": song,
+                        "similarity": r.get("score", 0.5),
+                        "metadata": {"emotion": target_emotion},
+                        "intent": {"mood": mood}
+                    })
+                    if len(results) >= top_k:
+                        break
+        
+        if len(results) > top_k:
+            import random
+            results = random.sample(results, top_k)
+        
+        cache_hits = sum(1 for r in results if r["metadata"].get("emotion") == target_emotion and r["similarity"] > 0.5)
+        print(f"  [搜索] Mood过滤: {mood}({target_emotion}) 找到{len(results)}首")
+        return results
+    
+    def _filter_by_artist(self, intent: Dict, top_k: int) -> List[Dict]:
+        """根据 artist 精确匹配，并叠加其他 metadata 条件（language/genre/year等）
+        
+        向量搜索对 'artist:xxx' 语法不可靠，embedding 模型不理解标签语义，
+        容易返回不相关结果。对于 artist 查询，直接用内存/DB精确匹配更准确。
+        """
+        target_artist = intent["artist"]
+        results = []
+        lib_db = get_library_db()
+        
+        for song_id, song in self.songs.items():
+            if song.artist != target_artist:
+                continue
+            
+            # 叠加 language 条件
+            if intent.get("language"):
+                record = lib_db.get_record(song.artist, song.title)
+                song_lang = record.language if record and record.language else None
+                if not song_lang:
+                    song_lang, lang_source, _ = self._detect_language(song)
+                    lib_db.update_language(song.artist, song.title, song_lang, lang_source)
+                if song_lang != intent["language"]:
+                    continue
+            
+            # 叠加 genre 条件
+            if intent.get("genre"):
+                song_genre = (song.genre or "").lower()
+                if intent["genre"].lower() not in song_genre:
+                    continue
+            
+            # 叠加 year_range 条件
+            if intent.get("year_range"):
+                if not self._match_year_range(song.year, intent["year_range"]):
+                    continue
+            
+            results.append({
+                "song": song,
+                "similarity": 1.0,
+                "metadata": {"artist": target_artist},
+                "intent": intent
+            })
+        
+        # 如果结果太多，随机采样保持多样性
+        if len(results) > top_k:
+            import random
+            results = random.sample(results, top_k)
+        
+        print(f"  [搜索] Artist精确匹配: {target_artist} ({len(results)}首)")
+        return results
+    
+    def _match_year_range(self, song_year: Optional[int], year_range: str) -> bool:
+        """匹配年代范围，如 '1990s', '2000s', '2010' 等"""
+        if not song_year:
+            return False
+        
+        yr = year_range.strip().lower()
+        
+        # 精确年份匹配，如 "1995"
+        if yr.isdigit():
+            return song_year == int(yr)
+        
+        # 年代匹配，如 "1990s" → 1990-1999
+        if yr.endswith("s") and yr[:-1].isdigit():
+            decade_start = int(yr[:-1])
+            return decade_start <= song_year < decade_start + 10
+        
+        # 范围匹配，如 "1990-2000"
+        if "-" in yr:
+            parts = yr.split("-")
+            if len(parts) == 2 and all(p.strip().isdigit() for p in parts):
+                start, end = int(parts[0].strip()), int(parts[1].strip())
+                return start <= song_year <= end
+        
+        return False
     
     def _build_enhanced_query(self, intent: Dict, original: str) -> str:
         """

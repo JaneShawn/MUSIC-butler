@@ -533,6 +533,7 @@ class MusicAgentChat:
 【Few-shot 示例】
 用户："周杰伦的歌" → {"intent": "query", "params": {"query": "周杰伦的歌"}}
 用户："播放晴天" → {"intent": "play_by_name", "params": {"song_name": "晴天"}}
+用户："播放周杰伦的歌" → {"intent": "query", "params": {"query": "周杰伦的歌"}}
 用户："有哪些语言" → {"intent": "show_language_stats", "params": {}}
 用户："西班牙语歌有哪些" → {"intent": "query", "params": {"query": "西班牙语歌"}}
 用户："哪首是西班牙语" → {"intent": "query", "params": {"query": "西班牙语歌"}}
@@ -2887,7 +2888,7 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
         return f"❌ 未知字段: {field}"
     
     def _clean_play_name(self, name: str) -> str:
-        """清洗歌名：去除书名号、歌手名后缀/前缀"""
+        """清洗歌名：去除书名号、歌手名后缀/前缀、通用后缀如'的歌'"""
         import re
         name = name.strip()
         # 去除书名号《》
@@ -2897,6 +2898,11 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
         name = re.sub(r'\s*[-–—]\s*\S+\s*$', '', name)
         # 去除头部 "歌手名 - " 如 "赵雷 - 程艾影"
         name = re.sub(r'^\S+\s*[-–—]\s*', '', name)
+        # 去除通用后缀："的歌"、"这首歌"、"的歌曲"
+        for suffix in ["的歌曲", "这首歌", "的歌"]:
+            if name.endswith(suffix):
+                name = name[:-len(suffix)]
+                break
         return name.strip()
     
     def handle_play_by_name(self, params: Dict) -> str:
@@ -2935,7 +2941,13 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
                 best_matches.sort(key=lambda x: x[0], reverse=True)
                 matched_songs = [s for _, s in best_matches[:5]]
         
+        # L3: 降级为 query 搜索（处理 "播放xxx的歌" 被误识别为 play_by_name 的情况）
         if not matched_songs:
+            query_results = self.librarian.query(raw_name, top_k=5)
+            if query_results:
+                self.context.set_query_results(query_results)
+                lines = [f"  {i}. 《{r['song'].title}》- {r['song'].artist}" for i, r in enumerate(query_results, 1)]
+                return f"找到 {len(query_results)} 首相关歌曲（输入序号或'第一首'选择）：\n" + "\n".join(lines)
             return f"未找到包含 '{raw_name}' 的歌曲"
         
         if len(matched_songs) == 1:

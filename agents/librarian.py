@@ -710,10 +710,10 @@ class LibrarianAgent(BaseAgent):
         return mapping.get(mood_lower)
     
     def _filter_by_mood(self, mood: str, top_k: int) -> List[Dict]:
-        """根据情绪标签过滤歌曲（优先用 emotion_cache，不足时 fallback 向量搜索）
+        """根据情绪标签过滤歌曲（优先用 emotion_cache，fallback SQLite，最后向量搜索）
         
         向量搜索对情绪语义匹配不可靠，"开心"可能返回《画心》。
-        优先使用已分析的真实情绪标签， fallback 到语义搜索。
+        优先使用已分析的真实情绪标签（含手动纠正）， fallback 到语义搜索。
         """
         target_emotion = self._map_mood_to_emotion(mood)
         if not target_emotion:
@@ -721,21 +721,38 @@ class LibrarianAgent(BaseAgent):
         
         from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
         analyzer = SimpleEmotionAnalyzer()
+        lib_db = get_library_db()
         
         results = []
+        
         for song_id, song in self.songs.items():
+            matched = False
+            sim = 0.5
+            
+            # L1: emotion_cache（含手动纠正，source='manual' 优先级最高）
             cache_key = analyzer._get_file_hash(song.file_path)
             if cache_key in analyzer._cache:
                 cached = analyzer._cache[cache_key]
                 if cached.get('emotion') == target_emotion:
-                    results.append({
-                        "song": song,
-                        "similarity": cached.get('confidence', 0.5),
-                        "metadata": {"emotion": target_emotion},
-                        "intent": {"mood": mood}
-                    })
+                    matched = True
+                    sim = cached.get('confidence', 0.5)
+            
+            # L2: SQLite（用户通过 update_song_info 或 correct_emotion 写入）
+            if not matched:
+                record = lib_db.get_record(song.artist, song.title)
+                if record and record.emotion == target_emotion:
+                    matched = True
+                    sim = 0.8
+            
+            if matched:
+                results.append({
+                    "song": song,
+                    "similarity": sim,
+                    "metadata": {"emotion": target_emotion},
+                    "intent": {"mood": mood}
+                })
         
-        # 缓存命中不足时，fallback 向量搜索补充
+        # 缓存+DB 命中不足时，fallback 向量搜索补充
         if len(results) < top_k:
             needed = top_k - len(results)
             fallback = self.vector_store.search(mood, top_k=needed + 10)
@@ -756,7 +773,6 @@ class LibrarianAgent(BaseAgent):
             import random
             results = random.sample(results, top_k)
         
-        cache_hits = sum(1 for r in results if r["metadata"].get("emotion") == target_emotion and r["similarity"] > 0.5)
         print(f"  [搜索] Mood过滤: {mood}({target_emotion}) 找到{len(results)}首")
         return results
     

@@ -322,7 +322,7 @@ class MusicAgentChat:
         self._VALID_INTENTS = {
             "query", "play_by_name", "playlist", "playlist_from_results",
             "batch_select", "show_language_stats", "scan", "analyze", "organize",
-            "show_library_stats", "recommend_random", "correct_language",
+            "show_library_stats", "recommend_random", "correct_language", "correct_emotion",
             "update_song_info", "analyze_emotion", "analyze_single_emotion",
             "detect_single_language", "detect_language_by_audio",
             "generate_lyrics_whisper", "download_lyrics",
@@ -548,6 +548,7 @@ class MusicAgentChat:
 用户："西班牙语歌有哪些" → {"intent": "query", "params": {"query": "西班牙语歌"}}
 用户："哪首是西班牙语" → {"intent": "query", "params": {"query": "西班牙语歌"}}
 用户："标记BTS为韩语" → {"intent": "correct_language", "params": {"input": "标记BTS为韩语"}}
+用户："标记晴天为快乐的歌" → {"intent": "correct_emotion", "params": {"input": "标记晴天为快乐的歌"}}
 用户："Supernatural是韩语" → {"intent": "update_song_info", "params": {"song_hint": "Supernatural", "field": "language", "value": "韩语"}}
 用户："检测Dynamite是什么语言" → {"intent": "detect_single_language", "params": {"song_name": "Dynamite"}}
 用户："分析情绪" → {"intent": "analyze_emotion", "params": {}}
@@ -593,6 +594,9 @@ class MusicAgentChat:
   ✓ "标记BTS为韩语"、"纠正XX的语言为日语"
   ✗ "BTS是韩语" → 这是 update_song_info（陈述句，不是纠正命令）
 
+- correct_emotion: 纠正某首歌的情绪标签
+  ✓ "标记晴天为快乐的歌"、"纠正XX的情绪为悲伤"
+
 - update_song_info: 更新歌曲信息（陈述句形式）
   ✓ "Supernatural是韩语"、"Dynamite是快乐的歌"
   ✗ "修复踊り子" → 这是 fix_single（"修复"是修复元数据，不是更新信息）
@@ -631,7 +635,8 @@ class MusicAgentChat:
 【绝对规则】
 1. "哪首是XX" = query（用户在找歌，不是检测单曲）
 2. "XX歌有哪些" = query（用户想看具体歌名列表，不是统计数字）
-3. "标记/纠正XX为YY" = correct_language
+3. "标记/纠正XX的语言为YY" = correct_language
+   "标记/纠正XX的情绪为YY" = correct_emotion
 4. "XX是YY"（没有标记/纠正/修复动词）= update_song_info
 5. "修复XX" = fix_single（修复元数据，不是更新属性）
 6. play_by_name 的 song_name 必须原样保留用户输入的歌名，不要自动添加歌手名，不要加书名号《》，不要根据对话历史修改字词（用户说"程艾影"就返回"程艾影"，不是"程爱影"）
@@ -885,8 +890,12 @@ class MusicAgentChat:
             return {"intent": "export_language_csv"}
         
         # 纠正语言（旧格式：标记 歌手 - 歌名 为 韩语）
-        if user_input.startswith(("标记", "纠正", "设置语言")):
+        if user_input.startswith(("标记", "纠正", "设置语言")) and not any(w in user_input for w in ["情绪", "情感", "心情"]):
             return {"intent": "correct_language", "params": {"input": user_input}}
+        
+        # 纠正情绪（标记/纠正 歌手 - 歌名 为 快乐/悲伤/...）
+        if user_input.startswith(("标记", "纠正")) and any(w in user_input for w in ["情绪", "情感", "心情", "快乐", "悲伤", "安静", "热血", "激情", "燃", "平静", "浪漫", "怀旧", "愤怒", "专注", "派对"]):
+            return {"intent": "correct_emotion", "params": {"input": user_input}}
         
         # 自然语言修改歌曲信息（如"supernatural是韩语歌"、"Dynamite是快乐的歌"）
         # 匹配：歌曲名 + 是/为/改成 + 属性 + 歌
@@ -1230,6 +1239,7 @@ class MusicAgentChat:
             "show_library_stats": self.handle_show_library_stats,
             "export_language_csv": self.handle_export_language_csv,
             "correct_language": self.handle_correct_language,
+            "correct_emotion": self.handle_correct_emotion,
             "update_song_info": self.handle_update_song_info,
             "analyze_emotion": self.handle_analyze_emotion,
             "analyze_single_emotion": self.handle_analyze_single_emotion,
@@ -2781,6 +2791,87 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
         detector.manual_set(artist.strip(), title.strip(), language)
         return f"✅ 已设置: {artist} - {title} = {language}"
     
+    def handle_correct_emotion(self, params: Dict) -> str:
+        """纠正情绪（命令式：标记/纠正 歌手 - 歌名 为 快乐/悲伤/...）"""
+        import re
+        from core.music_library_db import get_library_db
+        from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+        
+        text = params.get("input", "")
+        
+        # 匹配: "标记 BTS - Dynamite 为 快乐" 或 "纠正晴天为悲伤"
+        match = re.search(r"(?:标记|纠正)\s+(.+?)(?:的?情绪|的?心情|为|是|=)\s*(.+)", text)
+        if not match:
+            return """格式错误！请使用:
+  标记 BTS - Dynamite 为 快乐
+  纠正 周杰伦 - 晴天 的情绪为 悲伤"""
+        
+        song_info = match.group(1).strip()
+        emotion_raw = match.group(2).strip()
+        
+        # 清理情绪值中的"的歌"等后缀
+        for suffix in ["的歌", "歌"]:
+            if emotion_raw.endswith(suffix):
+                emotion_raw = emotion_raw[:-len(suffix)]
+                break
+        
+        # 标准化情绪
+        emotion_map = {
+            "快乐": "happy", "开心": "happy", "欢快": "happy",
+            "悲伤": "sad", "难过": "sad", "治愈": "sad", "安静": "sad", "抒情": "sad",
+            "热血": "energetic", "激情": "energetic", "燃": "energetic",
+            "平静": "calm", "放松": "calm", "舒缓": "calm",
+            "浪漫": "romantic", "甜蜜": "romantic",
+            "怀旧": "nostalgic", "经典": "nostalgic",
+            "愤怒": "angry", "发泄": "angry",
+            "专注": "focus", "工作": "focus",
+            "派对": "party", "舞曲": "party",
+        }
+        emotion = emotion_map.get(emotion_raw, emotion_raw)
+        
+        # 查找匹配的歌曲
+        if not self.librarian.songs:
+            self.librarian.run("scan")
+        
+        matched = []
+        hint_lower = song_info.lower()
+        
+        # 尝试解析 "歌手 - 歌名" 格式
+        if " - " in song_info:
+            artist_hint, title_hint = song_info.rsplit(" - ", 1)
+            artist_hint = artist_hint.strip().lower()
+            title_hint = title_hint.strip().lower()
+            for song in self.librarian.songs.values():
+                if artist_hint in song.artist.lower() and title_hint in song.title.lower():
+                    matched.append(song)
+        else:
+            # 模糊匹配标题或文件名
+            for song in self.librarian.songs.values():
+                if hint_lower in song.title.lower() or hint_lower in Path(song.file_path).stem.lower():
+                    matched.append(song)
+        
+        if not matched:
+            return f"❌ 未找到包含 '{song_info}' 的歌曲\n提示：使用 '歌手 - 歌名' 格式更精确"
+        
+        if len(matched) > 1:
+            songs_list = "\n".join([f"  {i+1}. {s.artist} - {s.title}" for i, s in enumerate(matched[:5])])
+            return f"找到多首匹配歌曲：\n{songs_list}\n\n请使用更精确的 '歌手 - 歌名' 格式"
+        
+        song = matched[0]
+        analyzer = SimpleEmotionAnalyzer()
+        analyzer.manual_set(song.file_path, emotion)
+        
+        lib_db = get_library_db()
+        lib_db.update_emotion(song.artist, song.title, emotion, '1.0')
+        
+        emotion_names = {
+            'happy': '快乐', 'sad': '悲伤', 'energetic': '激情',
+            'calm': '平静', 'romantic': '浪漫', 'nostalgic': '怀旧',
+            'angry': '愤怒', 'focus': '专注', 'party': '派对'
+        }
+        display = emotion_names.get(emotion, emotion)
+        return f"✅ 已纠正情绪: {song.artist} - {song.title} = {display}"
+    
     def handle_update_song_info(self, params: Dict) -> str:
         """自然语言方式更新歌曲信息（如'supernatural是韩语歌'、'kanye west的歌全都是英文的'）"""
         from core.music_library_db import get_library_db
@@ -2887,6 +2978,23 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
                 "派对": "party", "舞曲": "party",
             }
             normalized_value = emotion_map.get(value, value)
+            
+            # 批量更新模式
+            if is_batch and len(matched_songs) > 1:
+                from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+                analyzer = SimpleEmotionAnalyzer()
+                updated = 0
+                artist_name = matched_songs[0].artist
+                for s in matched_songs:
+                    analyzer.manual_set(s.file_path, normalized_value)
+                    lib_db.update_emotion(s.artist, s.title, normalized_value, '1.0')
+                    updated += 1
+                return f"✅ 已批量设置 {artist_name} 的 {updated} 首歌曲情绪为 {normalized_value}"
+            
+            # 单首更新：同步写入 emotion_cache（确保 _filter_by_mood 能读到）
+            from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+            analyzer = SimpleEmotionAnalyzer()
+            analyzer.manual_set(song.file_path, normalized_value)
             
             # 更新音乐库数据库（SQLite 即时写入）
             lib_db.update_emotion(song.artist, song.title, normalized_value, '1.0')

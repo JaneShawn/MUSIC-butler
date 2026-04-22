@@ -129,6 +129,18 @@ class SimpleEmotionAnalyzer:
         
         return result
     
+    def manual_set(self, file_path: str, emotion: str):
+        """手动设置歌曲情绪（用户纠正，优先级最高，不会被扫描覆盖）"""
+        cache_key = self._get_file_hash(file_path)
+        self._cache[cache_key] = {
+            'emotion': emotion,
+            'confidence': 1.0,
+            'audio_features': {},
+            'lyrics_sentiment': None,
+            'source': 'manual'
+        }
+        self._save_cache()
+    
     def _get_file_hash(self, file_path: str) -> str:
         import hashlib
         mtime = os.path.getmtime(file_path)

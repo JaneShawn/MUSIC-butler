@@ -315,7 +315,7 @@ class MusicAgentChat:
         
         # LLM 意图识别缓存（减少重复 API 调用）
         # 缓存版本：修改 prompt 后递增，使旧缓存自动失效
-        self._INTENT_CACHE_VERSION = 3
+        self._INTENT_CACHE_VERSION = 4
         self._intent_cache: Dict[str, Dict[str, Any]] = {}
         
         # 支持的所有意图白名单（用于验证 LLM 返回）
@@ -601,8 +601,9 @@ class MusicAgentChat:
   ✓ "检测BTS的Dynamite是什么语言"
   ✗ "哪首是西班牙语" → 这是 query（用户没指定歌名，是在找歌）
 
-- analyze_single_emotion: 分析某首已知歌名的情绪
-  ✓ "分析XX的情绪"
+- analyze_single_emotion: 分析某首已知歌名的情绪（必须用户明确说了歌名，只说"分析情绪"没有歌名 → analyze）
+  ✓ "分析晴天的情绪"
+  ✗ "分析情绪" → analyze（用户没指定歌名）
 
 === 其他 ===
 - scan: 扫描/更新音乐库
@@ -625,7 +626,8 @@ class MusicAgentChat:
 4. "XX是YY"（没有标记/纠正/修复动词）= update_song_info
 5. "修复XX" = fix_single（修复元数据，不是更新属性）
 6. play_by_name 的 song_name 必须原样保留用户输入的歌名，不要自动添加歌手名，不要加书名号《》，不要根据对话历史修改字词（用户说"程艾影"就返回"程艾影"，不是"程爱影"）
-7. 只返回JSON，不要任何解释文字"""
+7. analyze_single_emotion / detect_single_language 必须用户明确说了具体歌名。只说"分析情绪"、"检测语言"没有歌名 → analyze
+8. 只返回JSON，不要任何解释文字"""
 
         user_prompt = f"""{dialog_history}
 
@@ -3051,24 +3053,39 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
         from core.lyrics_fetcher import LyricsFetcher
         
         song_name = params.get("song_name", "")
-        if not song_name:
-            return "请告诉我歌曲名称"
         
-        if not self.librarian.songs:
-            self.librarian.run("scan")
+        # 处理指代词："第x首"、"这首歌"、"它" —— 从上次查询结果中解析
+        target_song = None
+        if song_name in ["这首歌", "它", "这首", "当前播放的歌", "刚才那首"] or \
+           (song_name and song_name.startswith("第") and "首" in song_name):
+            if self.context.last_query_results:
+                idx = self._parse_multi_select(song_name, len(self.context.last_query_results))
+                if idx and len(idx) == 1:
+                    target_song = self.context.last_query_results[idx[0] - 1].get("song")
+                elif not idx and self.context.last_query_results:
+                    target_song = self.context.last_query_results[0].get("song")
         
-        # 查找匹配的歌曲
-        matched_songs = []
-        for song in self.librarian.songs.values():
-            if song_name.lower() in song.title.lower() or \
-               song_name.lower() in f"{song.artist} - {song.title}".lower():
-                matched_songs.append(song)
+        # 如果没有通过指代词解析到歌曲，正常搜索
+        if not target_song:
+            if not song_name:
+                return "请告诉我歌曲名称（如「分析晴天的情绪」）"
+            
+            if not self.librarian.songs:
+                self.librarian.run("scan")
+            
+            # 查找匹配的歌曲
+            matched_songs = []
+            for song in self.librarian.songs.values():
+                if song_name.lower() in song.title.lower() or \
+                   song_name.lower() in f"{song.artist} - {song.title}".lower():
+                    matched_songs.append(song)
+            
+            if not matched_songs:
+                return f"未找到包含 '{song_name}' 的歌曲"
+            
+            target_song = matched_songs[0]
         
-        if not matched_songs:
-            return f"未找到包含 '{song_name}' 的歌曲"
-        
-        # 使用第一首匹配的歌曲
-        song = matched_songs[0]
+        song = target_song
         
         try:
             from core.emotion_analyzer_simple import SimpleEmotionAnalyzer as AudioEmotionAnalyzer

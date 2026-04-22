@@ -315,7 +315,7 @@ class MusicAgentChat:
         
         # LLM 意图识别缓存（减少重复 API 调用）
         # 缓存版本：修改 prompt 后递增，使旧缓存自动失效
-        self._INTENT_CACHE_VERSION = 2
+        self._INTENT_CACHE_VERSION = 3
         self._intent_cache: Dict[str, Dict[str, Any]] = {}
         
         # 支持的所有意图白名单（用于验证 LLM 返回）
@@ -619,7 +619,8 @@ class MusicAgentChat:
 3. "标记/纠正XX为YY" = correct_language
 4. "XX是YY"（没有标记/纠正/修复动词）= update_song_info
 5. "修复XX" = fix_single（修复元数据，不是更新属性）
-6. 只返回JSON，不要任何解释文字"""
+6. play_by_name 的 song_name 必须原样保留用户输入的歌名，不要自动添加歌手名，不要加书名号《》，不要根据对话历史修改字词（用户说"程艾影"就返回"程艾影"，不是"程爱影"）
+7. 只返回JSON，不要任何解释文字"""
 
         user_prompt = f"""{dialog_history}
 
@@ -2885,24 +2886,57 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
         
         return f"❌ 未知字段: {field}"
     
+    def _clean_play_name(self, name: str) -> str:
+        """清洗歌名：去除书名号、歌手名后缀/前缀"""
+        import re
+        name = name.strip()
+        # 去除书名号《》
+        if name.startswith("《") and name.endswith("》"):
+            name = name[1:-1]
+        # 去除尾部 " - 歌手名" 如 "程艾影 - 赵雷"
+        name = re.sub(r'\s*[-–—]\s*\S+\s*$', '', name)
+        # 去除头部 "歌手名 - " 如 "赵雷 - 程艾影"
+        name = re.sub(r'^\S+\s*[-–—]\s*', '', name)
+        return name.strip()
+    
     def handle_play_by_name(self, params: Dict) -> str:
         """通过歌名播放歌曲"""
-        song_name = params.get("song_name", "")
-        if not song_name:
+        raw_name = params.get("song_name", "")
+        if not raw_name:
             return "请告诉我歌曲名称"
         
         if not self.librarian.songs:
             self.librarian.run("scan")
         
-        # 查找匹配的歌曲
+        # 清洗歌名（去除书名号、歌手名后缀等）
+        song_name = self._clean_play_name(raw_name)
+        
+        # 查找匹配的歌曲（三级递进）
         matched_songs = []
+        
+        # L1: 精确子串匹配
         for song in self.librarian.songs.values():
             if song_name.lower() in song.title.lower() or \
                song_name.lower() in f"{song.artist} - {song.title}".lower():
                 matched_songs.append(song)
         
+        # L2: 模糊匹配（L1 无结果时，容错同音字/形近字）
+        if not matched_songs and len(song_name) >= 2:
+            from difflib import SequenceMatcher
+            best_matches = []
+            for song in self.librarian.songs.values():
+                title_sim = SequenceMatcher(None, song_name.lower(), song.title.lower()).ratio()
+                full_sim = SequenceMatcher(None, song_name.lower(), f"{song.artist} {song.title}".lower()).ratio()
+                max_sim = max(title_sim, full_sim)
+                if max_sim >= 0.6:
+                    best_matches.append((max_sim, song))
+            
+            if best_matches:
+                best_matches.sort(key=lambda x: x[0], reverse=True)
+                matched_songs = [s for _, s in best_matches[:5]]
+        
         if not matched_songs:
-            return f"未找到包含 '{song_name}' 的歌曲"
+            return f"未找到包含 '{raw_name}' 的歌曲"
         
         if len(matched_songs) == 1:
             song = matched_songs[0]

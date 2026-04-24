@@ -323,6 +323,7 @@ class MusicAgentChat:
             "query", "play_by_name", "playlist", "playlist_from_results",
             "batch_select", "show_language_stats", "scan", "analyze", "organize",
             "show_library_stats", "recommend_random", "correct_language", "correct_emotion",
+            "play_by_artist",
             "update_song_info", "analyze_emotion", "analyze_single_emotion",
             "detect_single_language", "detect_language_by_audio",
             "generate_lyrics_whisper", "download_lyrics",
@@ -541,7 +542,7 @@ class MusicAgentChat:
 【Few-shot 示例】
 用户："周杰伦的歌" → {"intent": "query", "params": {"query": "周杰伦的歌"}}
 用户："播放晴天" → {"intent": "play_by_name", "params": {"song_name": "晴天"}}
-用户："播放周杰伦的歌" → {"intent": "query", "params": {"query": "周杰伦的歌"}}
+用户："播放周杰伦的歌" → {"intent": "play_by_artist", "params": {"artist": "周杰伦"}}
 用户："播放开心的歌" → {"intent": "playlist", "params": {"mode": "emotion", "emotion": "happy"}}
 用户："有哪些开心的歌曲" → {"intent": "query", "params": {"query": "开心的歌"}}
 用户："有哪些语言" → {"intent": "show_language_stats", "params": {}}
@@ -573,6 +574,10 @@ class MusicAgentChat:
   ✓ "播放晴天"、"听Faded"、"放一首稻香"
   ✗ "播放开心的歌" → playlist（开心是情绪，不是歌名）
   ✗ "播放周杰伦的歌" → query（用户没指定具体歌名）
+
+- play_by_artist: 播放某歌手的全部歌曲（用户明确说"播放/听"+歌手名+"的歌/歌曲"）
+  ✓ "播放周杰伦的歌"、"听Kanye的歌"、"放陈奕迅的歌曲"
+  ✗ "播放晴天" → play_by_name（晴天是具体歌名，不是歌手）
 
 - playlist: 创建情绪/场景播放列表
   ✓ "悲伤歌单"、"适合跑步的歌"、"工作时听的"
@@ -1159,6 +1164,24 @@ class MusicAgentChat:
         if any(w in user_input for w in ["清除", "清空", "重置"]):
             return {"intent": "clear"}
         
+        # 播放/听/放（API不可用时兜底）
+        if any(w in user_input for w in ["播放", "听", "放", "来首", "给我放"]):
+            for prefix in ["播放", "听", "放", "放一首", "来一首", "给我放", "来首"]:
+                if user_input.startswith(prefix):
+                    potential = user_input[len(prefix):].strip()
+                    if potential and len(potential) > 1:
+                        # "播放kanye的歌" → play_by_artist（播放歌手全部歌曲）
+                        if potential.endswith(("的歌", "歌曲")):
+                            # 去掉"的歌"后缀提取歌手名
+                            for suffix in ["的歌", "歌曲"]:
+                                if potential.endswith(suffix):
+                                    potential = potential[:-len(suffix)]
+                                    break
+                            return {"intent": "play_by_artist", "params": {"artist": potential}}
+                        # "播放kanye" → 优先 play_by_name
+                        return {"intent": "play_by_name", "params": {"song_name": potential}}
+            return {"intent": "query", "params": {"query": user_input}}
+        
         # 查询本地库中特定情绪的歌曲（优先于闲聊）
         # 检测是否是询问本地情绪歌曲
         is_emotion_query = any(w in user_input for w in ["哪些", "有什么", "推荐", "歌", "歌曲"])
@@ -1240,6 +1263,7 @@ class MusicAgentChat:
             "export_language_csv": self.handle_export_language_csv,
             "correct_language": self.handle_correct_language,
             "correct_emotion": self.handle_correct_emotion,
+            "play_by_artist": self.handle_play_by_artist,
             "update_song_info": self.handle_update_song_info,
             "analyze_emotion": self.handle_analyze_emotion,
             "analyze_single_emotion": self.handle_analyze_single_emotion,
@@ -2376,6 +2400,50 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
 💾 {playlist_path}
 
 💡 未找到foobar2000，请手动导入播放列表
+"""
+    
+    def handle_play_by_artist(self, params: Dict) -> str:
+        """播放某歌手的全部歌曲（一键播放，不返回列表）"""
+        artist = params.get("artist", "")
+        if not artist:
+            return "请告诉我歌手名称"
+        
+        if not self.librarian.songs:
+            self.librarian.run("scan")
+        
+        # 使用 librarian 的 artist 过滤获取全部歌曲
+        intent = {"artist": artist}
+        results = self.librarian._filter_by_artist(intent, top_k=1000)
+        
+        if not results:
+            return f"未找到 {artist} 的歌曲"
+        
+        songs = [r["song"] for r in results]
+        
+        # 生成播放列表
+        playlist_name = f"{artist}_全集_{len(songs)}首"
+        playlist_path = self._create_m3u8_playlist(songs, playlist_name)
+        
+        # 调用 foobar2000 播放
+        foobar_result = self._play_with_foobar2000(str(playlist_path))
+        
+        if foobar_result:
+            return f"""
+🎵 正在播放 {artist} 的全部 {len(songs)} 首歌！
+
+💾 {playlist_path}
+🎧 {foobar_result}
+
+💡 歌单已保存，下次可直接在 foobar2000 中打开
+"""
+        else:
+            return f"""
+✅ {artist} 播放列表已创建！
+
+🎵 {len(songs)} 首歌曲
+💾 {playlist_path}
+
+💡 未找到 foobar2000，请手动导入播放列表
 """
     
     def handle_batch_select(self, params: Dict) -> str:

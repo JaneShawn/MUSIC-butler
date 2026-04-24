@@ -777,17 +777,20 @@ class LibrarianAgent(BaseAgent):
         return results
     
     def _filter_by_artist(self, intent: Dict, top_k: int) -> List[Dict]:
-        """根据 artist 精确匹配，并叠加其他 metadata 条件（language/genre/year等）
+        """根据 artist 匹配，并叠加其他 metadata 条件（language/genre/year等）
         
         向量搜索对 'artist:xxx' 语法不可靠，embedding 模型不理解标签语义，
-        容易返回不相关结果。对于 artist 查询，直接用内存/DB精确匹配更准确。
+        容易返回不相关结果。对于 artist 查询，用子串模糊匹配更实用
+        （如输入"Kanye"能匹配"Kanye West"）。
         """
         target_artist = intent["artist"]
+        target_lower = target_artist.lower()
         results = []
         lib_db = get_library_db()
         
         for song_id, song in self.songs.items():
-            if song.artist != target_artist:
+            # 子串模糊匹配：输入 "Kanye" 匹配 "Kanye West"
+            if target_lower not in song.artist.lower():
                 continue
             
             # 叠加 language 条件
@@ -823,7 +826,7 @@ class LibrarianAgent(BaseAgent):
             import random
             results = random.sample(results, top_k)
         
-        print(f"  [搜索] Artist精确匹配: {target_artist} ({len(results)}首)")
+        print(f"  [搜索] Artist匹配: {target_artist} ({len(results)}首)")
         return results
     
     def _match_year_range(self, song_year: Optional[int], year_range: str) -> bool:

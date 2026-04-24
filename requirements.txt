@@ -3,25 +3,30 @@ pydantic>=2.0.0
 python-dotenv>=1.0.0
 pyyaml>=6.0.0
 
-# Vector Database - 使用sqlite版本避免编译
+# Vector Database
 chromadb>=0.4.0
 sentence-transformers>=2.3.0
 
-# Audio Processing - 可选，使用纯Python版本
-# 如果安装失败可以先注释掉这些
+# Audio Processing
 mutagen>=1.47.0
 librosa>=0.10.0; sys_platform != "win32" or python_version >= "3.9"
+pydub>=0.25.1
+numpy>=1.24.0
+
+# Audio Language Detection (optional - Whisper tiny for 6th-layer language detection)
+# openai-whisper>=20231117
 
 # HTTP & API
 requests>=2.31.0
 httpx>=0.26.0
-python-dotenv>=1.0.0
 feedparser>=6.0.10
-# praw>=7.7.0  # Reddit支持（可选）
 
-# Web界面
+# Web UI
 streamlit>=1.30.0
 
 # Utils
 tqdm>=4.66.0
 watchdog>=3.0.0
+
+# Dev (tests)
+# pytest>=7.4.0

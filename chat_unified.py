@@ -328,7 +328,7 @@ class MusicAgentChat:
             "detect_single_language", "detect_language_by_audio",
             "generate_lyrics_whisper", "download_lyrics",
             "export_library", "export_language_csv", "import_library",
-            "help", "exit", "cancel", "chat", "play", "info", "fix_single"
+            "help", "exit", "cancel", "chat", "play", "play_all", "info", "fix_single"
         }
     
     @property
@@ -543,6 +543,7 @@ class MusicAgentChat:
 用户："周杰伦的歌" → {"intent": "query", "params": {"query": "周杰伦的歌"}}
 用户："播放晴天" → {"intent": "play_by_name", "params": {"song_name": "晴天"}}
 用户："播放周杰伦的歌" → {"intent": "play_by_artist", "params": {"artist": "周杰伦"}}
+用户："播放全部歌曲" → {"intent": "play_all", "params": {}}
 用户："播放开心的歌" → {"intent": "playlist", "params": {"mode": "emotion", "emotion": "happy"}}
 用户："有哪些开心的歌曲" → {"intent": "query", "params": {"query": "开心的歌"}}
 用户："有哪些语言" → {"intent": "show_language_stats", "params": {}}
@@ -578,6 +579,9 @@ class MusicAgentChat:
 - play_by_artist: 播放某歌手的全部歌曲（用户明确说"播放/听"+歌手名+"的歌/歌曲"）
   ✓ "播放周杰伦的歌"、"听Kanye的歌"、"放陈奕迅的歌曲"
   ✗ "播放晴天" → play_by_name（晴天是具体歌名，不是歌手）
+
+- play_all: 播放音乐库中全部歌曲
+  ✓ "播放全部歌曲"、"播放所有歌"、"全部播放"
 
 - playlist: 创建情绪/场景播放列表
   ✓ "悲伤歌单"、"适合跑步的歌"、"工作时听的"
@@ -1164,6 +1168,10 @@ class MusicAgentChat:
         if any(w in user_input for w in ["清除", "清空", "重置"]):
             return {"intent": "clear"}
         
+        # 播放全部/所有
+        if any(phrase in user_input for phrase in ["播放全部", "播放所有", "全部播放", "所有歌曲"]):
+            return {"intent": "play_all", "params": {}}
+        
         # 播放/听/放（API不可用时兜底）
         if any(w in user_input for w in ["播放", "听", "放", "来首", "给我放"]):
             for prefix in ["播放", "听", "放", "放一首", "来一首", "给我放", "来首"]:
@@ -1251,6 +1259,7 @@ class MusicAgentChat:
             "clear": self.handle_clear,
             "playlist": self.handle_playlist,
             "play_by_name": self.handle_play_by_name,
+            "play_all": self.handle_play_all,
             "recommend_random": self.handle_recommend_random,
             "playlist_from_results": self.handle_playlist_from_results,
             "batch_select": self.handle_batch_select,
@@ -2439,6 +2448,41 @@ sentence-transformers 未安装，当前使用ChromaDB默认embedding。
         else:
             return f"""
 ✅ {artist} 播放列表已创建！
+
+🎵 {len(songs)} 首歌曲
+💾 {playlist_path}
+
+💡 未找到 foobar2000，请手动导入播放列表
+"""
+    
+    def handle_play_all(self, params: Dict) -> str:
+        """播放音乐库中全部歌曲"""
+        if not self.librarian.songs:
+            self.librarian.run("scan")
+        
+        songs = list(self.librarian.songs.values())
+        if not songs:
+            return "音乐库为空"
+        
+        # 生成播放列表
+        playlist_name = f"全部歌曲_{len(songs)}首"
+        playlist_path = self._create_m3u8_playlist(songs, playlist_name)
+        
+        # 调用 foobar2000 播放
+        foobar_result = self._play_with_foobar2000(str(playlist_path))
+        
+        if foobar_result:
+            return f"""
+🎵 正在播放全部 {len(songs)} 首歌！
+
+💾 {playlist_path}
+🎧 {foobar_result}
+
+💡 歌单已保存，下次可直接在 foobar2000 中打开
+"""
+        else:
+            return f"""
+✅ 全部歌曲播放列表已创建！
 
 🎵 {len(songs)} 首歌曲
 💾 {playlist_path}

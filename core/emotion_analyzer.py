@@ -63,7 +63,7 @@ class AudioEmotionAnalyzer:
             try:
                 with open(self._cache_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except (json.JSONDecodeError, OSError, IOError):
                 pass
         return {}
     

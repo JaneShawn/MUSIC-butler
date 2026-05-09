@@ -165,7 +165,7 @@ class QQMusicAPI:
         if time_public and len(time_public) >= 4:
             try:
                 year = int(time_public[:4])
-            except:
+            except (ValueError, IndexError):
                 pass
         
         return {

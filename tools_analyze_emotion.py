@@ -24,7 +24,7 @@ from core.lyrics_fetcher import LyricsFetcher
 
 try:
     from core.kimi_client import KimiClient
-except:
+except ImportError:
     KimiClient = None
 
 
@@ -52,7 +52,7 @@ def main():
         try:
             kimi = KimiClient()
             print("[OK] Kimi API connected")
-        except:
+        except (ValueError, Exception):
             print("[WARN] Kimi API not available")
     
     # 初始化分析器和歌词获取器

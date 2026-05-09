@@ -55,7 +55,7 @@ class AudioConverter:
                 if result.returncode == 0:
                     print(f"✓ 找到 FFmpeg: {path}")
                     return path
-            except:
+            except (subprocess.SubprocessError, FileNotFoundError, OSError):
                 continue
         
         return None

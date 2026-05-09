@@ -22,7 +22,7 @@ class LocalLLM:
             subprocess.run(["ollama", "--version"], 
                          capture_output=True, check=True)
             return True
-        except:
+        except (subprocess.SubprocessError, FileNotFoundError):
             return False
     
     def generate(self, prompt: str, system: Optional[str] = None) -> str:
@@ -93,7 +93,7 @@ class LocalLLM:
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError):
             pass
         
         # Fallback：简单关键词提取

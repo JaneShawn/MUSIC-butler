@@ -4,6 +4,9 @@
 管理所有歌曲的完整信息，支持导出为CSV，可用Excel编辑
 """
 
+from core.logging_config import get_logger
+logger = get_logger(__name__)
+
 import csv
 import hashlib
 import sqlite3
@@ -35,6 +38,7 @@ class SongRecord:
     
     # 歌词信息
     has_lyrics: str = "否"
+    has_lyrics_int: int = 0  # 1=有歌词, 0=无歌词（整数，替代文本字段）
     lyrics_source: str = ""
     
     # 播放统计
@@ -53,7 +57,7 @@ class SongRecord:
 SONG_COLUMNS = [
     'id', 'file_path', 'title', 'artist', 'album', 'genre', 'year', 'duration',
     'language', 'language_source', 'emotion', 'emotion_confidence',
-    'has_lyrics', 'lyrics_source', 'play_count', 'last_played', 'notes',
+    'has_lyrics', 'has_lyrics_int', 'lyrics_source', 'play_count', 'last_played', 'notes',
     'updated_at', 'created_at'
 ]
 
@@ -91,6 +95,7 @@ class MusicLibraryDB:
                     emotion TEXT DEFAULT '',
                     emotion_confidence TEXT DEFAULT '',
                     has_lyrics TEXT DEFAULT '否',
+                    has_lyrics_int INTEGER DEFAULT 0,
                     lyrics_source TEXT DEFAULT '',
                     play_count TEXT DEFAULT '0',
                     last_played TEXT DEFAULT '',
@@ -105,6 +110,80 @@ class MusicLibraryDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_emotion ON songs(emotion)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_genre ON songs(genre)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_year ON songs(year)")
+            # 兼容旧表：添加 has_lyrics_int 列
+            try:
+                conn.execute("ALTER TABLE songs ADD COLUMN has_lyrics_int INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # 列已存在
+
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_has_lyrics_int ON songs(has_lyrics_int)")
+            conn.commit()
+
+            # 迁移旧 has_lyrics 文本 -> has_lyrics_int 整数
+            self._migrate_has_lyrics_int(conn)
+
+        # 创建新表（smart_playlists, smart_playlist_songs, metadata_fix_log）
+        self._init_new_tables()
+
+    def _migrate_has_lyrics_int(self, conn):
+        """将 has_lyrics 文本字段迁移为 has_lyrics_int 整数字段"""
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM songs WHERE has_lyrics_int = 0 AND has_lyrics = '是'"
+        )
+        count = cursor.fetchone()[0]
+        if count > 0:
+            conn.execute(
+                "UPDATE songs SET has_lyrics_int = 1 WHERE has_lyrics = '是' AND has_lyrics_int = 0"
+            )
+            conn.commit()
+            logger.info(f"已迁移 {count} 条 has_lyrics 文本→整数")
+
+    def _init_new_tables(self):
+        """创建智能歌单和元数据修复日志表"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS smart_playlists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    query_text TEXT NOT NULL,
+                    parsed_intent TEXT DEFAULT '',
+                    criteria TEXT DEFAULT '{}',
+                    is_dynamic INTEGER DEFAULT 0,
+                    song_count INTEGER DEFAULT 0,
+                    m3u8_path TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT ''
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS smart_playlist_songs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    playlist_id INTEGER NOT NULL,
+                    song_db_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    artist TEXT DEFAULT '',
+                    title TEXT DEFAULT '',
+                    sort_order INTEGER DEFAULT 0,
+                    added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (playlist_id) REFERENCES smart_playlists(id) ON DELETE CASCADE,
+                    FOREIGN KEY (song_db_id) REFERENCES songs(id) ON DELETE CASCADE
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata_fix_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_path TEXT NOT NULL,
+                    song_id TEXT DEFAULT '',
+                    fix_type TEXT NOT NULL,
+                    old_value TEXT DEFAULT '',
+                    new_value TEXT DEFAULT '',
+                    status TEXT DEFAULT 'success',
+                    error_msg TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_id ON smart_playlist_songs(playlist_id)")
             conn.commit()
     
     def _migrate_from_json(self):
@@ -126,13 +205,13 @@ class MusicLibraryDB:
                 self._insert_or_replace_record(SongRecord(**item))
                 migrated += 1
             
-            print(f"[MusicLibraryDB] 已从 JSON 迁移 {migrated} 条记录到 SQLite")
+            logger.info(f"已从 JSON 迁移 {migrated} 条记录到 SQLite")
             
             # 迁移完成后重命名旧文件，避免重复迁移
             json_file.rename(json_file.with_suffix('.json.bak'))
             
         except Exception as e:
-            print(f"[WARN] JSON 迁移失败: {e}")
+            logger.warning(f"JSON 迁移失败: {e}")
     
     @staticmethod
     def _file_to_id(file_path: str) -> str:
@@ -154,6 +233,7 @@ class MusicLibraryDB:
             emotion=row['emotion'] or '',
             emotion_confidence=row['emotion_confidence'] or '',
             has_lyrics=row['has_lyrics'] or '否',
+            has_lyrics_int=int(row['has_lyrics_int']) if row['has_lyrics_int'] else 0,
             lyrics_source=row['lyrics_source'] or '',
             play_count=str(row['play_count']) if row['play_count'] else '0',
             last_played=row['last_played'] or '',
@@ -171,14 +251,15 @@ class MusicLibraryDB:
                 INSERT OR REPLACE INTO songs (
                     id, file_path, title, artist, album, genre, year, duration,
                     language, language_source, emotion, emotion_confidence,
-                    has_lyrics, lyrics_source, play_count, last_played, notes,
+                    has_lyrics, has_lyrics_int, lyrics_source, play_count, last_played, notes,
                     updated_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 song_id, record.file_path, record.title, record.artist,
                 record.album, record.genre, record.year, record.duration,
                 record.language, record.language_source, record.emotion,
-                record.emotion_confidence, record.has_lyrics, record.lyrics_source,
+                record.emotion_confidence, record.has_lyrics, record.has_lyrics_int,
+                record.lyrics_source,
                 record.play_count, record.last_played, record.notes,
                 record.updated_at, record.created_at
             ))
@@ -268,11 +349,12 @@ class MusicLibraryDB:
     def update_lyrics_status(self, artist: str, title: str, has_lyrics: bool, source: str = ""):
         """更新歌词状态"""
         flag = "是" if has_lyrics else "否"
+        flag_int = 1 if has_lyrics else 0
         with sqlite3.connect(self.db_file) as conn:
             conn.execute(
-                """UPDATE songs SET has_lyrics = ?, lyrics_source = ?, updated_at = ?
+                """UPDATE songs SET has_lyrics = ?, has_lyrics_int = ?, lyrics_source = ?, updated_at = ?
                    WHERE artist = ? AND title = ?""",
-                (flag, source, datetime.now().isoformat(), artist, title)
+                (flag, flag_int, source, datetime.now().isoformat(), artist, title)
             )
             conn.commit()
     
@@ -364,7 +446,7 @@ class MusicLibraryDB:
             return str(self.csv_file)
             
         except Exception as e:
-            print(f"[ERROR] 导出CSV失败: {e}")
+            logger.error(f"导出CSV失败: {e}")
             return ""
     
     def delete(self, song_id: str) -> bool:
@@ -375,7 +457,7 @@ class MusicLibraryDB:
                 conn.commit()
                 return cursor.rowcount > 0
         except Exception as e:
-            print(f"[WARN] 删除记录失败: {e}")
+            logger.warning(f"删除记录失败: {e}")
             return False
     
     def delete_by_file_path(self, file_path: str) -> bool:
@@ -388,7 +470,7 @@ class MusicLibraryDB:
         csv_path = csv_path or self.csv_file
         
         if not Path(csv_path).exists():
-            print(f"[WARN] CSV文件不存在: {csv_path}")
+            logger.warning(f"CSV文件不存在: {csv_path}")
             return 0
         
         updated = 0
@@ -443,7 +525,7 @@ class MusicLibraryDB:
             return updated
             
         except Exception as e:
-            print(f"[ERROR] 导入CSV失败: {e}")
+            logger.error(f"导入CSV失败: {e}")
             return 0
     
     def migrate_from_chroma(self, vector_store):
@@ -472,12 +554,254 @@ class MusicLibraryDB:
                 self._insert_or_replace_record(record)
                 migrated += 1
             
-            print(f"[MusicLibraryDB] 已从 ChromaDB 迁移 {migrated} 条记录到 SQLite")
+            logger.info(f"已从 ChromaDB 迁移 {migrated} 条记录到 SQLite")
             return migrated
             
         except Exception as e:
-            print(f"[WARN] ChromaDB 迁移失败: {e}")
+            logger.warning(f"ChromaDB 迁移失败: {e}")
             return 0
+
+    # ============================================================
+    # 新增方法：情绪批量更新、诊断、查询
+    # ============================================================
+
+    def batch_update_emotion(self, emotion_map: Dict[str, Dict]) -> int:
+        """
+        批量更新歌曲情绪信息
+
+        Args:
+            emotion_map: {file_path_hash: {"emotion": str, "confidence": float, "source": str}}
+        Returns:
+            更新数量
+        """
+        updated = 0
+        with sqlite3.connect(self.db_file) as conn:
+            for file_hash, info in emotion_map.items():
+                emotion = info.get("emotion", "")
+                confidence = str(info.get("confidence", ""))
+                source = info.get("source", "")
+                if not emotion:
+                    continue
+                # 通过 file_path 的 MD5 前缀匹配 song id
+                cursor = conn.execute(
+                    "UPDATE songs SET emotion = ?, emotion_confidence = ?, updated_at = ? "
+                    "WHERE id LIKE ?",
+                    (emotion, confidence, datetime.now().isoformat(), file_hash + "%")
+                )
+                updated += cursor.rowcount
+            conn.commit()
+        return updated
+
+    def diagnose_incomplete(self) -> Dict[str, Any]:
+        """
+        诊断元数据不完整的歌曲
+
+        Returns:
+            {
+                "total": 总歌曲数,
+                "missing_artist": 数量,
+                "missing_cover": 数量 (has_lyrics_int=0 的也算缺封面信号),
+                "missing_emotion": 数量,
+                "has_lyrics_issue": has_lyrics 文本字段残留 "是/否" 的数量,
+                "songs_missing_artist": [file_path list],
+                "songs_missing_emotion": [file_path list],
+                "songs_has_lyrics_issue": [file_path list],
+            }
+        """
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+
+            cursor = conn.execute("SELECT COUNT(*) as cnt FROM songs")
+            total = cursor.fetchone()["cnt"]
+
+            cursor = conn.execute(
+                "SELECT COUNT(*) as cnt FROM songs WHERE artist = 'Unknown' OR artist = ''"
+            )
+            missing_artist = cursor.fetchone()["cnt"]
+
+            cursor = conn.execute(
+                "SELECT COUNT(*) as cnt FROM songs WHERE emotion = '' OR emotion IS NULL"
+            )
+            missing_emotion = cursor.fetchone()["cnt"]
+
+            cursor = conn.execute(
+                "SELECT COUNT(*) as cnt FROM songs WHERE has_lyrics = '是' AND has_lyrics_int = 0"
+            )
+            has_lyrics_issue = cursor.fetchone()["cnt"]
+
+            # 取样本列表
+            cursor = conn.execute(
+                "SELECT file_path FROM songs WHERE artist = 'Unknown' OR artist = '' LIMIT 100"
+            )
+            songs_missing_artist = [r["file_path"] for r in cursor.fetchall()]
+
+            cursor = conn.execute(
+                "SELECT file_path FROM songs WHERE emotion = '' OR emotion IS NULL LIMIT 100"
+            )
+            songs_missing_emotion = [r["file_path"] for r in cursor.fetchall()]
+
+            cursor = conn.execute(
+                "SELECT file_path FROM songs WHERE has_lyrics = '是' AND has_lyrics_int = 0 LIMIT 100"
+            )
+            songs_has_lyrics_issue = [r["file_path"] for r in cursor.fetchall()]
+
+        return {
+            "total": total,
+            "missing_artist": missing_artist,
+            "missing_emotion": missing_emotion,
+            "has_lyrics_issue": has_lyrics_issue,
+            "songs_missing_artist": songs_missing_artist,
+            "songs_missing_emotion": songs_missing_emotion,
+            "songs_has_lyrics_issue": songs_has_lyrics_issue,
+        }
+
+    def get_by_emotion(self, emotion: str, limit: int = 100) -> List[SongRecord]:
+        """根据情绪标签获取歌曲"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM songs WHERE emotion = ? LIMIT ?",
+                (emotion, limit)
+            )
+            return [self._row_to_record(row) for row in cursor.fetchall()]
+
+    def get_by_language(self, language: str, limit: int = 100) -> List[SongRecord]:
+        """根据语言获取歌曲"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM songs WHERE language = ? LIMIT ?",
+                (language, limit)
+            )
+            return [self._row_to_record(row) for row in cursor.fetchall()]
+
+    def fix_has_lyrics_field(self) -> int:
+        """将 has_lyrics 文本 '是'/'否' 迁移到 has_lyrics_int 1/0，修复残留数据"""
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.execute(
+                "UPDATE songs SET has_lyrics_int = 1 WHERE has_lyrics = '是' AND has_lyrics_int = 0"
+            )
+            fixed = cursor.rowcount
+            conn.commit()
+            if fixed:
+                logger.info(f"has_lyrics 文本→整数修复: {fixed} 条")
+            return fixed
+
+    # ============================================================
+    # 智能歌单 CRUD
+    # ============================================================
+
+    def create_playlist(self, name: str, query_text: str, parsed_intent: str = "",
+                        criteria: str = "{}", is_dynamic: bool = False,
+                        songs: List[Dict] = None, m3u8_path: str = "") -> int:
+        """创建智能歌单，返回 playlist_id"""
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.execute(
+                """INSERT INTO smart_playlists (name, description, query_text, parsed_intent,
+                   criteria, is_dynamic, song_count, m3u8_path, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, "", query_text, parsed_intent, criteria,
+                 1 if is_dynamic else 0, len(songs) if songs else 0,
+                 m3u8_path, now, now)
+            )
+            playlist_id = cursor.lastrowid
+
+            if songs:
+                for idx, song in enumerate(songs):
+                    song_id = self._file_to_id(song.get("file_path", ""))
+                    conn.execute(
+                        """INSERT INTO smart_playlist_songs
+                           (playlist_id, song_db_id, file_path, artist, title, sort_order)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (playlist_id, song_id, song.get("file_path", ""),
+                         song.get("artist", ""), song.get("title", ""), idx)
+                    )
+            conn.commit()
+        return playlist_id
+
+    def get_playlist(self, playlist_id: int) -> Optional[Dict]:
+        """获取单个智能歌单及其歌曲"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM smart_playlists WHERE id = ?", (playlist_id,)
+            )
+            pl = cursor.fetchone()
+            if not pl:
+                return None
+
+            cursor = conn.execute(
+                "SELECT * FROM smart_playlist_songs WHERE playlist_id = ? ORDER BY sort_order",
+                (playlist_id,)
+            )
+            songs = [dict(r) for r in cursor.fetchall()]
+
+            result = dict(pl)
+            result["songs"] = songs
+            return result
+
+    def list_playlists(self) -> List[Dict]:
+        """列出所有智能歌单"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM smart_playlists ORDER BY updated_at DESC"
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def delete_playlist(self, playlist_id: int) -> bool:
+        """删除智能歌单及其歌曲"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute("DELETE FROM smart_playlist_songs WHERE playlist_id = ?", (playlist_id,))
+            cursor = conn.execute("DELETE FROM smart_playlists WHERE id = ?", (playlist_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def refresh_playlist_songs(self, playlist_id: int, songs: List[Dict]) -> bool:
+        """刷新动态歌单的歌曲列表"""
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute(
+                "DELETE FROM smart_playlist_songs WHERE playlist_id = ?", (playlist_id,)
+            )
+            for idx, song in enumerate(songs):
+                song_id = self._file_to_id(song.get("file_path", ""))
+                conn.execute(
+                    """INSERT INTO smart_playlist_songs
+                       (playlist_id, song_db_id, file_path, artist, title, sort_order)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (playlist_id, song_id, song.get("file_path", ""),
+                     song.get("artist", ""), song.get("title", ""), idx)
+                )
+            conn.execute(
+                "UPDATE smart_playlists SET song_count = ?, updated_at = ? WHERE id = ?",
+                (len(songs), now, playlist_id)
+            )
+            conn.commit()
+        return True
+
+    def log_metadata_fix(self, file_path: str, fix_type: str, old_value: str = "",
+                         new_value: str = "", status: str = "success", error_msg: str = ""):
+        """记录元数据修复操作"""
+        song_id = self._file_to_id(file_path) if file_path else ""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute(
+                """INSERT INTO metadata_fix_log (file_path, song_id, fix_type, old_value,
+                   new_value, status, error_msg) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (file_path, song_id, fix_type, old_value, new_value, status, error_msg)
+            )
+            conn.commit()
+
+    def get_fix_log(self, limit: int = 50) -> List[Dict]:
+        """获取最近的修复日志"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM metadata_fix_log ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
 
 
 # 单例

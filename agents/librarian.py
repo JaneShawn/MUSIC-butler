@@ -2,6 +2,7 @@
 Librarian Agent - 本地音乐库管理 + RAG
 """
 import os
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
@@ -82,7 +83,8 @@ class LibrarianAgent(BaseAgent):
         
         # 内存中的歌曲索引
         self.songs: Dict[str, Song] = {}
-        
+        self._lock = threading.RLock()
+
         # 从持久化数据库恢复歌曲索引
         # music_library_db 是唯一可信数据源，ChromaDB 只是可重建的搜索索引
         self._load_songs_from_db()
@@ -133,7 +135,8 @@ class LibrarianAgent(BaseAgent):
         self.log("info", f"Starting metadata fix (dry_run={dry_run}, rename={rename_files}, download_cover={download_cover})")
         
         # 找出元数据不完整的歌曲
-        incomplete_songs = [s for s in self.songs.values() if s.artist == "Unknown" or s.title == "Unknown"]
+        with self._lock:
+            incomplete_songs = [s for s in self.songs.values() if s.artist == "Unknown" or s.title == "Unknown"]
         total_incomplete = len(incomplete_songs)
         
         if not incomplete_songs:
@@ -505,72 +508,93 @@ class LibrarianAgent(BaseAgent):
             self.log("error", f"Failed to write metadata to {song.file_path}: {e}")
             return False
     
+    @staticmethod
+    def has_embedded_cover(file_path: str) -> bool:
+        """检测音频文件是否已有内嵌封面（FLAC/MP3/M4A）。"""
+        ext = Path(file_path).suffix.lower()
+        try:
+            if ext == ".flac":
+                from mutagen.flac import FLAC
+                return len(FLAC(file_path).pictures) > 0
+            elif ext == ".mp3":
+                from mutagen.id3 import ID3
+                tags = ID3(file_path)
+                return any(k.startswith("APIC") for k in (tags.keys() if tags else []))
+            elif ext in (".m4a", ".mp4"):
+                from mutagen.mp4 import MP4
+                return "covr" in MP4(file_path)
+        except Exception:
+            pass
+        return False
+
     def scan_library(self) -> Dict:
         """扫描整个音乐库（自动清理已删除文件的残留索引）"""
         self.log("info", f"Scanning library at: {self.library_path}")
-        
+
         music_files = self._find_music_files()
         current_ids = {self._file_to_id(fp) for fp in music_files}
         self.log("info", f"Found {len(music_files)} music files")
-        
-        # 1. 清理已删除的"幽灵歌曲"（同时清理内存、ChromaDB、SQLite）
-        lib_db = get_library_db()
-        removed = 0
-        ghost_ids = [sid for sid, song in list(self.songs.items()) if sid not in current_ids]
-        for song_id in ghost_ids:
-            try:
-                self.vector_store.delete(song_id)
-                lib_db.delete(song_id)
-                del self.songs[song_id]
-                removed += 1
-            except Exception as e:
-                self.log("warning", f"Failed to remove ghost song {song_id}: {e}")
-        
-        if removed:
-            print(f"[Librarian] 清理了 {removed} 首已删除文件的残留索引（已同步清理 SQLite）")
-        
-        # 2. 处理所有文件：新文件完整索引，已有文件同步到 DB
-        new_songs = []
-        synced = 0
-        for file_path in music_files:
-            song_id = self._file_to_id(file_path)
-            
-            if song_id in self.songs:
-                # 已有文件：轻量级同步到 music_library_db（确保DB有记录）
-                song = self.songs[song_id]
-                if not lib_db.get_record(song.artist, song.title):
-                    lib_db.update_or_create(
-                        file_path=song.file_path,
-                        title=song.title,
-                        artist=song.artist,
-                        album=song.album,
-                        genre=song.genre,
-                        year=str(song.year),
-                        duration=str(song.duration)
-                    )
-                    synced += 1
-                continue
-            
-            # 新文件：完整解析并索引
-            song = self._process_file(file_path)
-            if song:
-                self.songs[song_id] = song
-                new_songs.append(song)
-        
-        # 添加到向量数据库和 music_library_db
-        if new_songs:
-            self._index_songs(new_songs)
-        
-        if synced:
-            print(f"[Librarian] 同步了 {synced} 首已有歌曲到 music_library_db")
-        
-        result = {
-            "total_files": len(music_files),
-            "new_songs": len(new_songs),
-            "synced": synced,
-            "removed": removed,
-            "total_indexed": len(self.songs)
-        }
+
+        with self._lock:
+            # 1. 清理已删除的"幽灵歌曲"（同时清理内存、ChromaDB、SQLite）
+            lib_db = get_library_db()
+            removed = 0
+            ghost_ids = [sid for sid, song in list(self.songs.items()) if sid not in current_ids]
+            for song_id in ghost_ids:
+                try:
+                    self.vector_store.delete(song_id)
+                    lib_db.delete(song_id)
+                    del self.songs[song_id]
+                    removed += 1
+                except Exception as e:
+                    self.log("warning", f"Failed to remove ghost song {song_id}: {e}")
+
+            if removed:
+                print(f"[Librarian] 清理了 {removed} 首已删除文件的残留索引（已同步清理 SQLite）")
+
+            # 2. 处理所有文件：新文件完整索引，已有文件同步到 DB
+            new_songs = []
+            synced = 0
+            for file_path in music_files:
+                song_id = self._file_to_id(file_path)
+
+                if song_id in self.songs:
+                    # 已有文件：轻量级同步到 music_library_db（确保DB有记录）
+                    song = self.songs[song_id]
+                    if not lib_db.get_record(song.artist, song.title):
+                        lib_db.update_or_create(
+                            file_path=song.file_path,
+                            title=song.title,
+                            artist=song.artist,
+                            album=song.album,
+                            genre=song.genre,
+                            year=str(song.year),
+                            duration=str(song.duration)
+                        )
+                        synced += 1
+                    continue
+
+                # 新文件：完整解析并索引
+                song = self._process_file(file_path)
+                if song:
+                    self.songs[song_id] = song
+                    new_songs.append(song)
+
+            # 添加到向量数据库和 music_library_db
+            if new_songs:
+                self._index_songs(new_songs)
+
+            if synced:
+                print(f"[Librarian] 同步了 {synced} 首已有歌曲到 music_library_db")
+
+            result = {
+                "total_files": len(music_files),
+                "new_songs": len(new_songs),
+                "synced": synced,
+                "removed": removed,
+                "total_indexed": len(self.songs)
+            }
+
         self.log("info", f"Scan complete: {result}")
         return result
     
@@ -663,7 +687,9 @@ class LibrarianAgent(BaseAgent):
         results = []
         missing = 0
         
-        for song_id, song in self.songs.items():
+        with self._lock:
+            _songs_snapshot = list(self.songs.items())
+        for song_id, song in _songs_snapshot:
             # 优先从持久化 DB 读取语言（O(1)，不触发网络请求）
             record = lib_db.get_record(song.artist, song.title)
             if record and record.language:
@@ -694,9 +720,10 @@ class LibrarianAgent(BaseAgent):
         return results
     
     def _map_mood_to_emotion(self, mood: str) -> Optional[str]:
-        """将中文/英文情绪词映射到情绪标签"""
+        """将中文/英文情绪词映射到情绪标签（含场景→情绪）"""
         mood_lower = mood.lower().strip()
         mapping = {
+            # === 核心情绪 ===
             'happy': 'happy', '开心': 'happy', '快乐': 'happy', '欢乐': 'happy', '高兴': 'happy', '愉快': 'happy',
             'sad': 'sad', '悲伤': 'sad', '难过': 'sad', '伤心': 'sad', 'melancholy': 'sad', '哭': 'sad',
             'energetic': 'energetic', '激情': 'energetic', '燃': 'energetic', '热血': 'energetic', '强烈': 'energetic',
@@ -706,6 +733,26 @@ class LibrarianAgent(BaseAgent):
             'angry': 'angry', '愤怒': 'angry', '怒': 'angry', '恨': 'angry', 'rage': 'angry',
             'focus': 'focus', '专注': 'focus', '工作': 'focus', '学习': 'focus', 'background': 'focus',
             'party': 'party', '派对': 'party', '嗨': 'party', '舞': 'party', 'club': 'party', 'dance': 'party',
+            # === 天气场景 → 情绪 ===
+            '下雨': 'sad', '雨天': 'sad', 'rain': 'sad', 'raining': 'sad', '雨': 'sad',
+            '晴天': 'happy', 'sunny': 'happy', '阳光': 'happy',
+            '阴天': 'nostalgic', 'cloudy': 'nostalgic',
+            '雪': 'romantic', 'snow': 'romantic', '下雪': 'romantic',
+            # === 时间段场景 → 情绪 ===
+            '晚上': 'calm', 'night': 'calm', '夜晚': 'calm',
+            '深夜': 'sad', 'latenight': 'sad', '半夜': 'sad',
+            '早晨': 'happy', '早上': 'happy', 'morning': 'happy',
+            # === 活动场景 → 情绪 ===
+            '运动': 'energetic', 'workout': 'energetic', '健身': 'energetic',
+            '跑步': 'energetic', 'running': 'energetic', '慢跑': 'energetic',
+            '学习': 'focus', 'study': 'focus', '自习': 'focus',
+            '工作': 'focus', '办公': 'focus',
+            '睡觉': 'calm', '睡眠': 'calm', 'sleep': 'calm', '助眠': 'calm',
+            '睡前': 'calm', 'bedtime': 'calm',
+            '通勤': 'focus', 'commute': 'focus', '路上': 'focus',
+            '开车': 'energetic', 'driving': 'energetic', '驾车': 'energetic',
+            '洗澡': 'happy', 'shower': 'happy',
+            '咖啡': 'focus', 'coffee': 'focus', 'cafe': 'focus',
         }
         return mapping.get(mood_lower)
     
@@ -725,10 +772,12 @@ class LibrarianAgent(BaseAgent):
         
         results = []
         
-        for song_id, song in self.songs.items():
+        with self._lock:
+            _songs_snapshot = list(self.songs.items())
+        for song_id, song in _songs_snapshot:
             matched = False
             sim = 0.5
-            
+
             # L1: emotion_cache（含手动纠正，source='manual' 优先级最高）
             cache_key = analyzer._get_file_hash(song.file_path)
             if cache_key in analyzer._cache:
@@ -788,7 +837,9 @@ class LibrarianAgent(BaseAgent):
         results = []
         lib_db = get_library_db()
         
-        for song_id, song in self.songs.items():
+        with self._lock:
+            _songs_snapshot = list(self.songs.items())
+        for song_id, song in _songs_snapshot:
             # 子串模糊匹配：输入 "Kanye" 匹配 "Kanye West"
             if target_lower not in song.artist.lower():
                 continue
@@ -891,17 +942,18 @@ class LibrarianAgent(BaseAgent):
     def add_song(self, file_path: str) -> Optional[Song]:
         """添加单首歌曲"""
         song_id = self._file_to_id(file_path)
-        
-        if song_id in self.songs:
-            self.log("warning", f"Song already exists: {file_path}")
-            return self.songs[song_id]
-        
-        song = self._process_file(file_path)
-        if song:
-            self.songs[song_id] = song
-            self._index_songs([song])
-            self.log("info", f"Added song: {song.title} - {song.artist}")
-            return song
+
+        with self._lock:
+            if song_id in self.songs:
+                self.log("warning", f"Song already exists: {file_path}")
+                return self.songs[song_id]
+
+            song = self._process_file(file_path)
+            if song:
+                self.songs[song_id] = song
+                self._index_songs([song])
+                self.log("info", f"Added song: {song.title} - {song.artist}")
+                return song
         return None
     
     def get_stats(self) -> Dict:
@@ -912,7 +964,10 @@ class LibrarianAgent(BaseAgent):
         artist_counter = Counter()
         genre_counter = Counter()
         
-        for song in self.songs.values():
+        with self._lock:
+            _songs_snapshot = list(self.songs.values())
+
+        for song in _songs_snapshot:
             if song.artist:
                 artist_counter[song.artist] += 1
             if song.genre:
@@ -921,11 +976,11 @@ class LibrarianAgent(BaseAgent):
                 for g in genres:
                     if g:
                         genre_counter[g] += 1
-        
+
         return {
             "total_songs": len(self.songs),
             "artists": len(artist_counter),
-            "albums": len(set(s.album for s in self.songs.values())),
+            "albums": len(set(s.album for s in _songs_snapshot)),
             "genres": len(genre_counter),
             "top_artists": artist_counter.most_common(10),  # Top 10 艺术家
             "top_genres": genre_counter.most_common(10),    # Top 10 流派

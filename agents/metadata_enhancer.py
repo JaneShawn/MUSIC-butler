@@ -347,7 +347,7 @@ class MetadataEnhancer:
                             pic_url = album_data.get('picUrl')
                             if pic_url:
                                 return pic_url
-                except:
+                except (KeyError, IndexError, requests.RequestException):
                     continue
                     
         except Exception as e:

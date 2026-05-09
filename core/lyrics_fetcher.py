@@ -166,7 +166,7 @@ class LyricsFetcher:
                         }
                         mapped_lang = lang_map.get(raw_lang, raw_lang)
                         self._save_language_to_cache(title, artist, mapped_lang)
-            except:
+            except (KeyError, requests.RequestException, json.JSONDecodeError):
                 pass  # 语言获取失败不影响歌词获取
             
             # 获取歌词

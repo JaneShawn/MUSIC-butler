@@ -10,51 +10,33 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+from core.emotion_constants import EMOTION_KEYWORDS, MOOD_KEYWORDS
+
+
 class NLPUtils:
     """NLP 工具类 - 处理中文文本的边界情况"""
-    
+
     # 停用词/助词列表（只清理首尾，保留中间）
     STOP_WORDS = {
         '的', '了', '吗', '呢', '吧', '啊', '哦', '嗯', '呗', '嘛',
         '是', '有', '在', '和', '与', '或', '这', '那', '它', '个',
     }
-    
+
     # 歌曲名后缀（需要移除的）—— 按长度降序排列，避免部分匹配
-    # ❌ 严禁使用单字后缀（'歌'、'版'、'之'、'的'），会导致歌名被过度裁剪
-    # 例："小情歌" → 若含'歌'后缀 → 变成"小情"
+    # 严禁使用单字后缀，会导致歌名被过度裁剪
     SONG_SUFFIXES = [
         '这首歌的', '这首的', '这个的', '这首歌', '这首', '这个',
         '的歌曲', '的歌', '之歌', '版本', '版',
     ]
-    
+
     # 艺术家名后缀
     ARTIST_SUFFIXES = [
         '唱的歌', '唱的', '的作品', '的歌', '的',
     ]
-    
-    # 统一情绪关键词映射（用于播放列表、情绪查询）
-    EMOTION_KEYWORDS = {
-        "快乐": "happy", "开心": "happy", "欢快": "happy", "高兴": "happy",
-        "悲伤": "sad", "难过": "sad", "伤感": "sad", "抒情": "sad",
-        "治愈": "calm", "安静": "calm", "平静": "calm", "放松": "calm", "舒缓": "calm", "轻松": "calm", "冥想": "calm",
-        "燃": "energetic", "激情": "energetic", "热血": "energetic", "运动": "energetic", "嗨": "energetic",
-        "浪漫": "romantic", "甜蜜": "romantic", "爱情": "romantic", "心动": "romantic",
-        "怀旧": "nostalgic", "经典": "nostalgic", "回忆": "nostalgic", "老歌": "nostalgic",
-        "愤怒": "angry", "发泄": "angry", "摇滚": "angry",
-        "专注": "focus", "工作": "focus", "学习": "focus",
-        "派对": "party", "聚会": "party", "舞曲": "party"
-    }
-    
-    # 发现音乐场景的心情映射（网易云歌单 / 场景）
-    MOOD_KEYWORDS = {
-        "工作": "work", "办公": "work", "专注": "work",
-        "学习": "study", "自习": "study",
-        "运动": "workout", "健身": "workout", "跑步": "workout",
-        "放松": "relax", "休息": "relax", "休闲": "relax",
-        "睡觉": "sleep", "睡眠": "sleep", "助眠": "sleep",
-        "派对": "party", "聚会": "party", "嗨": "party",
-        "通勤": "commute", "路上": "commute", "开车": "commute"
-    }
+
+    # Imported from core.emotion_constants (single source of truth)
+    EMOTION_KEYWORDS = EMOTION_KEYWORDS
+    MOOD_KEYWORDS = MOOD_KEYWORDS
     
     @classmethod
     def clean_song_name(cls, text: str) -> str:
@@ -123,12 +105,6 @@ class NLPUtils:
         text = text.strip('.,!?;:，。！？；：')
         
         return text.strip()
-
-from core.kimi_client import KimiClient
-from core.vector_store import EMBEDDING_MODELS
-from core.audio_converter import AudioConverter, preview_conversion
-from agents import LibrarianAgent, ScoutAgent, CuratorAgent, OrganizerAgent, OrganizeStrategy
-
 
 class SessionState(Enum):
     """会话状态"""

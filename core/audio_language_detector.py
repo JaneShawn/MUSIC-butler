@@ -45,10 +45,10 @@ class AudioLanguageDetector:
             try:
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except (json.JSONDecodeError, OSError, IOError):
                 pass
         return {}
-    
+
     def _save_cache(self):
         """保存缓存"""
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)

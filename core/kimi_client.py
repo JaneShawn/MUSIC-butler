@@ -3,6 +3,7 @@ Kimi API 客户端
 """
 import os
 import json
+import time
 from typing import Optional, List, Dict, Any
 import httpx
 
@@ -25,58 +26,100 @@ class KimiClient:
         }
         self.model = "moonshot-v1-8k"
     
-    def chat(self, 
-             messages: List[Dict[str, str]], 
+    def chat(self,
+             messages: List[Dict[str, str]],
              temperature: float = 0.7,
              max_tokens: int = 1000,
              retries: int = 3) -> str:
+        """调用Kimi聊天接口（带重试）。返回纯文本。"""
+        response = self.chat_completion(
+            messages=messages,
+            tools=None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            retries=retries,
+        )
+        return response.get("content", "") or ""
+    
+    def chat_completion(self,
+                        messages: List[Dict[str, str]],
+                        tools: Optional[List[Dict]] = None,
+                        tool_choice: Optional[str] = "auto",
+                        temperature: float = 0.7,
+                        max_tokens: int = 1000,
+                        retries: int = 3) -> Dict[str, Any]:
         """
-        调用Kimi聊天接口（带重试）
+        支持 Function Calling 的完整 chat 接口。
+
+        Returns:
+            {
+                "role": "assistant",
+                "content": "文本回复或空字符串",
+                "tool_calls": [
+                    {
+                        "id": "call_xxx",
+                        "type": "function",
+                        "function": {
+                            "name": "工具名",
+                            "arguments": '{"key": "value"}'
+                        }
+                    }
+                ]
+            }
+
+        没有 tool_calls 时 tool_calls 为 None。
         """
-        import time
-        
         for attempt in range(retries):
             try:
+                body = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if tools:
+                    body["tools"] = tools
+                    if tool_choice:
+                        body["tool_choice"] = tool_choice
+
                 with httpx.Client(timeout=60.0) as client:
                     response = client.post(
                         f"{self.BASE_URL}/chat/completions",
                         headers=self.headers,
-                        json={
-                            "model": self.model,
-                            "messages": messages,
-                            "temperature": temperature,
-                            "max_tokens": max_tokens
-                        }
+                        json=body,
                     )
-                    
-                    # 处理限流
+
                     if response.status_code == 429:
-                        wait_time = 2 ** attempt  # 指数退避
+                        wait_time = 2 ** attempt
                         print(f"API限流，等待{wait_time}秒后重试...")
                         time.sleep(wait_time)
                         continue
-                    
+
                     response.raise_for_status()
-                    
                     data = response.json()
-                    return data["choices"][0]["message"]["content"]
-                    
+                    msg = data["choices"][0]["message"]
+                    return {
+                        "role": msg.get("role", "assistant"),
+                        "content": msg.get("content") or "",
+                        "tool_calls": msg.get("tool_calls") or None,
+                    }
+
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429 and attempt < retries - 1:
                     continue
                 print(f"Kimi API HTTP error: {e}")
-                return ""
+                return {"role": "assistant", "content": "", "tool_calls": None}
             except Exception as e:
                 print(f"Kimi API error: {e}")
                 if attempt < retries - 1:
                     time.sleep(1)
                     continue
-                return ""
-        
-        return ""
-    
-    def generate(self, 
-                 prompt: str, 
+                return {"role": "assistant", "content": "", "tool_calls": None}
+
+        return {"role": "assistant", "content": "", "tool_calls": None}
+
+    def generate(self,
+                 prompt: str,
                  system: Optional[str] = None,
                  **kwargs) -> str:
         """

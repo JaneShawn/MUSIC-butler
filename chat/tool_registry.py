@@ -1,7 +1,12 @@
 """
-ToolRegistry — 注册所有 Kimi Function Calling 工具定义。
+ToolRegistry — Function Calling 工具定义（OpenAI 兼容格式）。
 
-每个 tool 对应一个 handler，name 直接映射到 MusicAgentChat.execute 的 dispatch dict。
+[架构说明]
+每个 tool 的 name 必须与 chat_unified.py 里 execute() 的 handlers dict key 一致。
+新增功能的流程：
+  1. 在这里加 tool 定义（name + description + parameters）
+  2. 在 chat/handlers/ 对应 mixin 里加 handle_xxx 方法
+  3. 在 chat_unified.py 的 execute() handlers dict 加一行映射
 """
 from typing import Dict, Any
 
@@ -11,6 +16,8 @@ class ToolRegistry:
 
     @staticmethod
     def build_system_prompt() -> str:
+        # [可修改] system prompt — 改了这里会影响 LLM 对所有请求的理解和路由行为。
+        # 描述越详细，LLM 越准确，但 token 消耗也越大。
         return """你是一个音乐管理助手 Music Agent，帮助用户管理本地音乐库。
 
 你可以：搜索歌曲、按语言/情绪筛选、播放歌曲、创建歌单、扫描整理音乐库、
@@ -21,7 +28,9 @@ class ToolRegistry:
 
     @staticmethod
     def get_tools() -> list:
-        """返回 OpenAI 兼容的 tools 数组"""
+        # [可修改] 工具数组 — 新增/删除/修改工具在这里改。
+        # 每个工具的定义直接影响 LLM 如何理解和路由用户请求。
+        # 警告：删工具前确保 execute() handlers 里没有对应的 key，否则运行时报错。
         return [
             # === 搜索/查询 ===
             {
@@ -42,14 +51,19 @@ class ToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "query_language_songs",
-                    "description": "列出/播放所有特定语言的歌曲。例如：'播放所有国语歌'、'粤语歌有哪些'、'所有英文歌'",
+                    "description": "列出/播放所有特定语言的歌曲。例如：'播放所有国语歌'、'粤语歌有哪些'、'所有英文歌'。当用户说'播放所有X语歌'时，play=true",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "language": {
                                 "type": "string",
                                 "description": "语言名称",
+                                # [可修改] 语言列表 — 加新语言在这里加，同时更新 LANGUAGE_ALIAS
                                 "enum": ["国语", "英语", "粤语", "日语", "韩语", "法语", "德语", "西班牙语"],
+                            },
+                            "play": {
+                                "type": "boolean",
+                                "description": "用户是否要求直接播放（而非仅列出）。包含'播放'/'放'/'听'等动词时为true",
                             },
                         },
                         "required": ["language"],
@@ -60,14 +74,19 @@ class ToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "query_emotion_songs",
-                    "description": "列出/播放所有特定情绪的歌曲。例如：'所有开心的歌'、'有哪些安静的歌'、'播放全部悲伤的歌'",
+                    "description": "列出/播放所有特定情绪的歌曲。例如：'所有开心的歌'、'有哪些安静的歌'、'播放全部悲伤的歌'。当用户说'播放所有X的歌'时，play=true",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "emotion": {
                                 "type": "string",
                                 "description": "情绪名称",
+                                # [可修改] 情绪列表 — 加新情绪在这里加，同时更新 emotion_names 字典
                                 "enum": ["happy", "sad", "calm", "energetic", "romantic", "nostalgic", "angry", "focus", "party"],
+                            },
+                            "play": {
+                                "type": "boolean",
+                                "description": "用户是否要求直接播放（而非仅列出）。包含'播放'/'放'/'听'等动词时为true",
                             },
                         },
                         "required": ["emotion"],

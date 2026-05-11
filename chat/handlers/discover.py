@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """DiscoverHandlers - handler mixin for MusicAgentChat."""
+import os
 from typing import Dict, Any, List
 from pathlib import Path
 class DiscoverHandlers:

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """FixHandlers - handler mixin for MusicAgentChat."""
 from typing import Dict, Any
+from pathlib import Path
 class FixHandlers:
     """Handler methods mixed into MusicAgentChat."""
 

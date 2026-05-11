@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """PlayHandlers - handler mixin for MusicAgentChat."""
+import os
+import shutil
+import subprocess
+from pathlib import Path
 from typing import Dict, Any, Optional
 class PlayHandlers:
     """Handler methods mixed into MusicAgentChat."""
@@ -282,10 +286,21 @@ class PlayHandlers:
         item = params.get("item", {})
         song = item.get('song', item)
         return self._play_song(song)
-    
+
+    def _play_all_songs(self, songs: list, label: str, category: str) -> str:
+        """直接播放全部匹配歌曲（创建播放列表并推送到 foobar2000）。"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%m%d_%H%M")
+        playlist_name = f"{category}_{label}_{timestamp}_{len(songs)}首"
+        playlist_path = self._create_m3u8_playlist(songs, playlist_name)
+        foobar_result = self._play_with_foobar2000(str(playlist_path))
+        if foobar_result:
+            return f"🎵 正在播放全部 {len(songs)} 首「{label}」歌曲！\n📋 {playlist_name}\n💾 {playlist_path}\n🎧 {foobar_result}"
+        return f"📋 已创建播放列表「{playlist_name}」({len(songs)} 首)\n💾 {playlist_path}"
+
     def _play_with_foobar2000(self, file_path: str) -> Optional[str]:
         """调用 foobar2000 播放指定文件"""
-        # 常见安装路径
+        # [可修改] foobar2000 搜索路径 — 如果安装在别的地方，在这里加路径
         foobar_paths = [
             r"C:\Program Files\foobar2000\foobar2000.exe",
             r"C:\Program Files (x86)\foobar2000\foobar2000.exe",
@@ -315,30 +330,29 @@ class PlayHandlers:
     
 
     def handle_query_emotion_songs(self, params: Dict) -> str:
-        """查询本地库中特定情绪的歌曲"""
+        """查询或播放特定情绪的歌曲。play=True 时直接播放全部匹配歌曲。"""
         emotion = params.get("emotion", "happy")
-        
+        play = params.get("play", False)
+
         if not self.librarian.songs:
             self.librarian.run("scan")
-        
-        # 加载情绪分析器
+
         try:
             from core.emotion_analyzer_simple import SimpleEmotionAnalyzer as AudioEmotionAnalyzer
         except ImportError:
             return "情绪分析模块加载失败"
-        
+
         analyzer = AudioEmotionAnalyzer()
-        
-        # 查找缓存中该情绪的歌曲
         emotion_names = {
             'happy': '快乐', 'sad': '悲伤', 'energetic': '激情',
             'calm': '平静', 'romantic': '浪漫', 'nostalgic': '怀旧',
             'angry': '愤怒', 'focus': '专注', 'party': '派对'
         }
         emotion_name = emotion_names.get(emotion, emotion)
-        
+
         matching_songs = []
-        
+        matched_objects = []
+
         for song in self.librarian.songs.values():
             cache_key = analyzer._get_file_hash(song.file_path)
             if cache_key in analyzer._cache:
@@ -347,42 +361,49 @@ class PlayHandlers:
                     matching_songs.append({
                         'title': song.title or Path(song.file_path).stem,
                         'artist': song.artist or 'Unknown',
-                        'confidence': cached.get('confidence', 0)
+                        'confidence': cached.get('confidence', 0),
+                        'song': song,
                     })
-        
+                    matched_objects.append(song)
+
         if not matching_songs:
             return f"暂无标记为「{emotion_name}」的歌曲。\n请先运行「分析情绪」来分析你的音乐库。"
-        
-        # 按置信度排序
+
         matching_songs.sort(key=lambda x: x['confidence'], reverse=True)
-        
-        # 显示结果
+
+        # 存储到上下文，支持后续"播放所有"等交互
+        self.context.set_query_results(matching_songs)
+
+        if play and matched_objects:
+            return self._play_all_songs(matched_objects, emotion_name, "情绪")
+
         lines = [f"🎵 你的音乐库中有 {len(matching_songs)} 首「{emotion_name}」的歌曲：", ""]
-        
-        for i, song in enumerate(matching_songs[:15], 1):  # 最多显示15首
+
+        for i, song in enumerate(matching_songs[:15], 1):
             conf_emoji = "⭐" if song['confidence'] > 0.7 else ""
             lines.append(f"{i}. 《{song['title']}》- {song['artist']} {conf_emoji}")
-        
+
         if len(matching_songs) > 15:
             lines.append(f"\n...还有 {len(matching_songs) - 15} 首")
-        
-        lines.append(f"\n💡 可以对我说「创建一个{emotion_name}的播放列表」生成foobar2000歌单")
-        
+
+        lines.append(f"\n💡 输入「播放所有」直接播放全部 | 「创建一个{emotion_name}的播放列表」生成歌单")
+
         return "\n".join(lines)
     
 
     def handle_query_language_songs(self, params: Dict) -> str:
-        """查询本地库中特定语言的歌曲"""
+        """查询或播放特定语言的歌曲。play=True 时直接播放全部匹配歌曲。"""
         language = params.get("language", "韩语")
-        
+        play = params.get("play", False)
+
         if not self.librarian.songs:
             self.librarian.run("scan")
-        
-        # 使用language_detector检测语言
+
         from core.language_detector import detector
-        
+
         matching_songs = []
-        
+        matched_objects = []
+
         for song in self.librarian.songs.values():
             lang, source, conf = detector.detect(song.title, song.artist, song.file_path)
             if lang == language:
@@ -390,26 +411,32 @@ class PlayHandlers:
                     'title': song.title or Path(song.file_path).stem,
                     'artist': song.artist or 'Unknown',
                     'source': source,
-                    'confidence': conf
+                    'confidence': conf,
+                    'song': song,
                 })
-        
+                matched_objects.append(song)
+
         if not matching_songs:
             return f"暂无检测到「{language}」歌曲。"
-        
-        # 按置信度排序
+
         matching_songs.sort(key=lambda x: x['confidence'], reverse=True)
-        
-        # 显示结果
+
+        # 存储到上下文，支持后续"播放所有"等交互
+        self.context.set_query_results(matching_songs)
+
+        if play and matched_objects:
+            return self._play_all_songs(matched_objects, language, "语言")
+
         lines = [f"🎵 你的音乐库中有 {len(matching_songs)} 首「{language}」歌曲：", ""]
-        
-        for i, song in enumerate(matching_songs[:20], 1):  # 最多显示20首
+
+        for i, song in enumerate(matching_songs[:20], 1):
             conf_emoji = "⭐" if song['confidence'] > 0.8 else ""
             lines.append(f"{i}. 《{song['title']}》- {song['artist']} {conf_emoji}")
-        
+
         if len(matching_songs) > 20:
             lines.append(f"\n...还有 {len(matching_songs) - 20} 首")
-        
-        lines.append(f"\n💡 提示：可以对我说「标记 歌手 - 歌名 为 英语」来纠正语言")
+
+        lines.append(f"\n💡 提示：输入「播放所有」直接播放全部 | 「标记 歌手 - 歌名 为 英语」纠正语言")
 
         return "\n".join(lines)
 

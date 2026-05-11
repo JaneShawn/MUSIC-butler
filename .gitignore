@@ -51,6 +51,15 @@ env/
 .coverage
 htmlcov/
 
+# Session state
+chat_session.json
+
+# Generated playlists
+playlists/
+
+# Debug artifacts
+debug*.txt
+
 # 系统文件
 .DS_Store
 Thumbs.db

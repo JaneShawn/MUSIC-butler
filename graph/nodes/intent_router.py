@@ -10,12 +10,7 @@ from core.emotion_constants import EMOTION_KEYWORDS, EMOTION_ALIAS, EMOTION_NAME
 from core.language_constants import LANGUAGE_ALIAS
 from core.vector_store import EMBEDDING_MODELS
 from chat.context import NLPUtils
-
-def _msg_content(msg) -> str:
-    """从 dict 或 LangChain BaseMessage 中安全提取文本内容。"""
-    if isinstance(msg, dict):
-        return msg.get("content", "") or ""
-    return getattr(msg, "content", "") or ""
+from graph.utils import msg_content
 
 
 _COMMAND_MAP = {
@@ -27,22 +22,32 @@ _COMMAND_MAP = {
     "语言检测": "show_language_stats", "语言分布": "show_language_stats",
     "语言统计": "show_language_stats", "有哪些语言": "show_language_stats",
     "情绪检测": "analyze_emotion", "情绪分布": "analyze_emotion",
+    "监控": "monitor", "monitor": "monitor",
 }
 
 
 def intent_router_node(state: MusicAgentState) -> Dict[str, Any]:
     """解析用户意图，路由到对应 Agent 节点"""
+    result = _do_route(state)
+    # 每轮对话必须清空 final_response，防止 MemorySaver 跨轮残留
+    result.setdefault("final_response", "")
+    result.setdefault("task_params", {})
+    return result
+
+
+def _do_route(state: MusicAgentState) -> Dict[str, Any]:
+    """内部路由逻辑"""
     messages = state.get("messages", [])
     if not messages:
-        return {"intent": "respond", "task_params": {}, "agent_trace": ["intent_router: 无消息"]}
+        return {"intent": "respond", "agent_trace": ["intent_router: 无消息"]}
 
     last_msg = messages[-1]
-    user_input = _msg_content(last_msg).strip()
+    user_input = msg_content(last_msg).strip()
 
     # L0: 命令映射
     cmd = _COMMAND_MAP.get(user_input)
     if cmd:
-        return {"intent": cmd, "task_params": {}, "agent_trace": [f"intent_router(L0): {cmd}"]}
+        return {"intent": cmd, "agent_trace": [f"intent_router(L0): {cmd}"]}
 
     # ---- 确认/取消拦截（优先级高于关键词） ----
     pending = state.get("pending_action")
@@ -56,7 +61,7 @@ def intent_router_node(state: MusicAgentState) -> Dict[str, Any]:
                 "agent_trace": ["intent_router(confirm): pending action executed"],
             }
         if any(w in user_input for w in cancel_words):
-            return {"intent": "cancel", "task_params": {},
+            return {"intent": "cancel",
                     "agent_trace": ["intent_router(confirm): cancelled"]}
 
     # ---- 查询结果后的快捷上下文指令 ----
@@ -132,10 +137,11 @@ def _l1_intercept(user_input: str, user_input_lower: str) -> Dict[str, Any]:
 def _llm_fc_route(user_input: str) -> Dict[str, Any]:
     """L2: LLM Function Calling 意图识别"""
     try:
+        from graph.utils import load_config
         from core.kimi_client import KimiClient
         from chat.tool_registry import ToolRegistry
 
-        kimi = KimiClient()
+        kimi = KimiClient(config=load_config())
         messages = [
             {"role": "system", "content": ToolRegistry.build_system_prompt()},
             {"role": "user", "content": user_input},

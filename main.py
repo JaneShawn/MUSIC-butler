@@ -20,7 +20,6 @@ Music Agent - 主入口
 import argparse
 import sys
 from pathlib import Path
-import yaml
 import json
 
 # 修复Windows终端编码
@@ -29,27 +28,23 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # 加载.env文件
+from pathlib import Path as _Path
 from dotenv import load_dotenv
-load_dotenv()
+_env_path = _Path(__file__).parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path, override=True)
+else:
+    load_dotenv()
 
-from agents import LibrarianAgent, ScoutAgent, CuratorAgent, OrganizerAgent, OrganizeStrategy
-
-
-def load_config():
-    """加载配置"""
-    config_path = Path(__file__).parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+from agents import ScoutAgent, CuratorAgent, OrganizerAgent, OrganizeStrategy
+from agents.librarian import get_librarian
 
 
 def cmd_scan(args):
     """扫描音乐库"""
-    config = load_config()
-    agent = LibrarianAgent(config)
-    
     print("🔍 正在扫描音乐库...")
-    result = agent.run("scan")
-    
+    result = get_librarian().scan_library()
+
     print(f"\n✅ 扫描完成！")
     print(f"   发现文件: {result['total_files']}")
     print(f"   新增歌曲: {result['new_songs']}")
@@ -58,21 +53,17 @@ def cmd_scan(args):
 
 def cmd_query(args):
     """查询歌曲"""
-    config = load_config()
-    agent = LibrarianAgent(config)
-    
-    # 先确保有数据
-    agent.run("scan")
-    
+    agent = get_librarian()
+
     print(f"🔍 查询: {args.text}")
     results = agent.query(args.text, top_k=args.top_k)
-    
+
     if not results:
         print("❌ 没有找到匹配的歌曲")
         return
-    
+
     print(f"\n🎵 找到 {len(results)} 首相关歌曲:\n")
-    
+
     for i, item in enumerate(results, 1):
         song = item["song"]
         print(f"{i}. {song.title}")
@@ -84,32 +75,29 @@ def cmd_query(args):
 
 def cmd_discover(args):
     """发现新音乐"""
+    from graph.utils import load_config
+
     config = load_config()
-    
-    librarian = LibrarianAgent(config)
+    librarian = get_librarian(config)
     scout = ScoutAgent(config)
     curator = CuratorAgent(config, librarian)
-    
-    # 确保本地库已扫描
-    print("📚 正在准备音乐库...")
-    librarian.run("scan")
-    
+
     # 发现候选
     print(f"🔍 正在从 {args.source} 发现新音乐...")
     candidates = scout.run(args.source)
-    
+
     if not candidates:
         print("❌ 没有发现新音乐")
         return
-    
+
     print(f"\n📬 发现 {len(candidates)} 首候选歌曲\n")
-    
+
     # 评估推荐
     print("🤖 策展人正在评估...")
     recommendations = curator.run("evaluate", candidates=candidates)
-    
+
     print(f"✅ 生成 {len(recommendations)} 条推荐:\n")
-    
+
     for rec in recommendations:
         badge = "⭐" if rec.action == "highly_recommend" else "👍"
         print(f"{badge} {rec.candidate.artist} - {rec.candidate.title}")
@@ -120,30 +108,31 @@ def cmd_discover(args):
 
 def cmd_report(args):
     """生成周报"""
+    from graph.utils import load_config
+
     config = load_config()
-    
-    librarian = LibrarianAgent(config)
+    librarian = get_librarian(config)
     scout = ScoutAgent(config)
     curator = CuratorAgent(config, librarian)
-    
+
     # 获取本周发现
     candidates = scout.run("all")
     recommendations = curator.run("evaluate", candidates=candidates) if candidates else []
-    
+
     # 生成报告
     report = curator.run("report", recommendations=recommendations)
-    
+
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         print(f"\n📊 {report['title']}\n")
-        
+
         summary = report['summary']
         print(f"本周发现: {summary['total_discovered']} 首")
         print(f"强烈推荐: {summary['highly_recommended']} 首")
         print(f"涉及流派: {', '.join(summary['genres'])}")
         print()
-        
+
         if report['recommendations']:
             print("本周推荐:\n")
             for rec in report['recommendations']:
@@ -155,20 +144,22 @@ def cmd_report(args):
 def cmd_web(args):
     """启动Web界面"""
     import subprocess
-    
+
     web_path = Path(__file__).parent / "web" / "app.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(web_path)]
-    
+
     print("🚀 启动 Web 界面...")
     print(f"   访问 http://localhost:8501\n")
-    
+
     subprocess.run(cmd)
 
 
 def cmd_organize(args):
     """整理音乐文件"""
+    from graph.utils import load_config
+
     config = load_config()
-    librarian = LibrarianAgent(config)
+    librarian = get_librarian(config)
     organizer = OrganizerAgent(config, librarian)
     
     print("📁 音乐文件整理工具")

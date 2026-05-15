@@ -1,7 +1,6 @@
 """
 Scout Agent - 外部音乐发现
 """
-import os
 import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
@@ -67,6 +66,9 @@ class ScoutAgent(BaseAgent):
         self.rss_feeds = config.get("scout", {}).get("rss_feeds", [])
         self.reddit_subs = config.get("scout", {}).get("reddit_subs", [])
         self.max_candidates = config.get("scout", {}).get("max_candidates_per_run", 20)
+        self.reddit_client_id = config.get("scout", {}).get("reddit_client_id", "")
+        self.reddit_client_secret = config.get("scout", {}).get("reddit_client_secret", "")
+        self.reddit_user_agent = config.get("scout", {}).get("reddit_user_agent", "MusicAgent/1.0")
         
         # 元数据查询
         self.metadata_fetcher = MetadataFetcher(config)
@@ -197,16 +199,16 @@ class ScoutAgent(BaseAgent):
             self.log("info", "Reddit support disabled (praw not installed). Use: pip install praw")
             return candidates
         
-        # 检查环境变量
-        if not os.getenv("REDDIT_CLIENT_ID") or not os.getenv("REDDIT_CLIENT_SECRET"):
-            self.log("info", "Reddit API keys not configured (set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET)")
+        # 检查 Reddit 配置
+        if not self.reddit_client_id or not self.reddit_client_secret:
+            self.log("info", "Reddit API keys not configured (set reddit_client_id and reddit_client_secret in config.yaml)")
             return candidates
-        
+
         try:
             reddit = praw.Reddit(
-                client_id=os.getenv("REDDIT_CLIENT_ID"),
-                client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                user_agent=os.getenv("REDDIT_USER_AGENT", "MusicAgent/1.0")
+                client_id=self.reddit_client_id,
+                client_secret=self.reddit_client_secret,
+                user_agent=self.reddit_user_agent,
             )
             
             for sub_name in self.reddit_subs:

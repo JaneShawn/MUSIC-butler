@@ -10,7 +10,6 @@ def route_by_intent(state) -> str:
         # Librarian 域
         "query": "librarian",
         "search": "librarian",
-        "scan": "librarian",
         "play_by_name": "librarian",
         "play_by_artist": "librarian",
         "play_all": "librarian",
@@ -66,6 +65,7 @@ def route_by_intent(state) -> str:
         "download_lyrics": "respond",
         "generate_lyrics_whisper": "respond",
         "monitor": "respond",
+        "scan": "respond",
     }
 
     return routing_map.get(intent, "respond")

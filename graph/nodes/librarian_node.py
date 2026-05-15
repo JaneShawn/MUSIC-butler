@@ -8,13 +8,7 @@ from langgraph.prebuilt import create_react_agent
 from graph.state import MusicAgentState
 from graph.kimi_adapter import KimiChatModel
 from graph.tools.library_tools import LIBRARIAN_TOOLS
-
-
-def _msg_content(msg) -> str:
-    """从 dict 或 LangChain BaseMessage 中安全提取文本内容。"""
-    if isinstance(msg, dict):
-        return msg.get("content", "") or ""
-    return getattr(msg, "content", "") or ""
+from graph.utils import msg_content
 
 
 LIBRARIAN_SYSTEM_PROMPT = """你是音乐图书管理员，负责管理用户的本地音乐库。你的职责：
@@ -45,7 +39,9 @@ _agent = None
 def _get_agent():
     global _agent
     if _agent is None:
-        llm = KimiChatModel(model="moonshot-v1-8k", temperature=0.3, max_tokens=800)
+        from graph.utils import load_config
+        model = load_config().get("llm", {}).get("model", "moonshot-v1-8k")
+        llm = KimiChatModel(model=model, temperature=0.3, max_tokens=800)
         _agent = create_react_agent(
             model=llm,
             tools=LIBRARIAN_TOOLS,
@@ -66,7 +62,7 @@ def librarian_node(state: MusicAgentState) -> Dict[str, Any]:
             "agent_trace": state.get("agent_trace", []) + ["librarian: no input"],
         }
 
-    user_input = _msg_content(messages[-1])
+    user_input = msg_content(messages[-1])
 
     agent = _get_agent()
     result = agent.invoke({"messages": [("user", user_input)]})

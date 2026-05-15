@@ -26,14 +26,14 @@ def step1_scan():
     print("[Step 1/3] 扫描清理幽灵记录")
     print("=" * 60)
     
-    from agents.librarian import LibrarianAgent
+    from agents.librarian import get_librarian
     import yaml
     
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     
-    librarian = LibrarianAgent(config)
+    librarian = get_librarian(config)
     result = librarian.scan_library()
     
     print(f"\n扫描结果:")
@@ -52,7 +52,7 @@ def step2_language(batch_size=50, offset=0):
     print("[Step 2/3] 批量语言检测")
     print("=" * 60)
     
-    from agents.librarian import LibrarianAgent
+    from agents.librarian import get_librarian
     from core.language_detector import detect_language
     from core.music_library_db import get_library_db
     import yaml
@@ -61,7 +61,7 @@ def step2_language(batch_size=50, offset=0):
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     
-    librarian = LibrarianAgent(config)
+    librarian = get_librarian(config)
     lib_db = get_library_db()
     
     songs = list(librarian.songs.values())
@@ -152,7 +152,7 @@ def step3_emotion():
     print("[Step 3/3] 批量情绪分析")
     print("=" * 60)
     
-    from agents.librarian import LibrarianAgent
+    from agents.librarian import get_librarian
     from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
     from core.lyrics_fetcher import LyricsFetcher
     import yaml
@@ -161,7 +161,7 @@ def step3_emotion():
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     
-    librarian = LibrarianAgent(config)
+    librarian = get_librarian(config)
     analyzer = SimpleEmotionAnalyzer()
     fetcher = LyricsFetcher(lyrics_dir="data/lyrics")
     

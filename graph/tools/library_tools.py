@@ -17,14 +17,8 @@ from core.music_library_db import get_library_db
 def search_music(query: str, top_k: int = 10) -> str:
     """语义搜索本地音乐库。query 是自然语言查询（如'周杰伦的歌'、'90年代摇滚'）。
     返回匹配的歌曲列表（JSON格式，含歌曲名、艺术家、专辑、相似度）。"""
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
     results = agent.query(query, top_k=top_k)
     formatted = []
     for r in results:
@@ -46,14 +40,8 @@ def search_music(query: str, top_k: int = 10) -> str:
 def scan_library() -> str:
     """扫描音乐库目录，发现新添加的音乐文件并入库。
     返回扫描结果：总文件数、新歌曲数、已索引总数（JSON格式）。"""
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
     result = agent.scan_library()
     return json.dumps(result, ensure_ascii=False)
 
@@ -62,14 +50,8 @@ def scan_library() -> str:
 def get_song_info(title_hint: str) -> str:
     """根据歌曲名或艺术家查询歌曲详情（从本地音乐库）。
     title_hint 是歌名或艺术家名的关键词，匹配成功后返回完整元数据（JSON格式）。"""
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
     results = agent.query(title_hint, top_k=5)
     formatted = []
     for r in results:
@@ -90,14 +72,8 @@ def get_song_info(title_hint: str) -> str:
 @tool
 def get_library_stats() -> str:
     """获取音乐库整体统计：总歌曲数、艺术家数、流派数、Top艺术家/流派（JSON格式）。"""
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
     stats = agent.get_stats()
     return json.dumps(stats, ensure_ascii=False)
 
@@ -181,13 +157,8 @@ def play_song(title_hint: str) -> str:
     """通过歌名或歌手+歌名关键词播放一首歌曲。
     先搜索匹配，然后调用 foobar2000 播放。title_hint 为歌名关键词。
     返回播放结果描述（JSON格式）。"""
-    import yaml
-    from agents.librarian import LibrarianAgent
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
 
     if not agent.songs:
         agent.scan_library()
@@ -271,13 +242,8 @@ def play_song(title_hint: str) -> str:
 def play_all_songs() -> str:
     """播放音乐库中的全部歌曲。创建 M3U8 播放列表并通过 foobar2000 播放。
     返回播放结果描述（JSON格式）。"""
-    import yaml
-    from agents.librarian import LibrarianAgent
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
 
     if not agent.songs:
         agent.scan_library()
@@ -286,6 +252,8 @@ def play_all_songs() -> str:
     if not songs:
         return json.dumps({"status": "empty", "message": "音乐库为空"}, ensure_ascii=False)
 
+    from graph.utils import load_config
+    config = load_config()
     playlist_name = f"全部歌曲_{len(songs)}首"
     playlist_path = _create_m3u8_playlist(songs, playlist_name, config)
     foobar_result = _play_with_foobar2000(str(playlist_path))
@@ -306,13 +274,8 @@ def play_all_songs() -> str:
 def play_by_artist(artist: str) -> str:
     """播放指定歌手的所有歌曲。artist 为艺术家名。
     返回播放结果描述（JSON格式）。"""
-    import yaml
-    from agents.librarian import LibrarianAgent
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
 
     if not agent.songs:
         agent.scan_library()
@@ -324,6 +287,8 @@ def play_by_artist(artist: str) -> str:
                           ensure_ascii=False)
 
     songs = [r["song"] for r in results]
+    from graph.utils import load_config
+    config = load_config()
     playlist_name = f"{artist}_全集_{len(songs)}首"
     playlist_path = _create_m3u8_playlist(songs, playlist_name, config)
     foobar_result = _play_with_foobar2000(str(playlist_path))
@@ -346,13 +311,8 @@ def play_by_language(language: str) -> str:
     """播放指定语言的所有歌曲（如"播放所有英文歌"、"播放韩语歌"）。
     language 为语言名称（如'英语'、'韩语'、'日语'、'粤语'、'国语'）。
     创建 M3U8 播放列表并通过 foobar2000 播放，返回播放结果（JSON格式）。"""
-    import yaml
-    from agents.librarian import LibrarianAgent
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
 
     if not agent.songs:
         agent.scan_library()
@@ -370,6 +330,8 @@ def play_by_language(language: str) -> str:
                            "message": f"未找到「{language}」歌曲"},
                           ensure_ascii=False)
 
+    from graph.utils import load_config
+    config = load_config()
     playlist_name = f"{language}_全集_{len(matched_objects)}首"
     playlist_path = _create_m3u8_playlist(matched_objects, playlist_name, config)
     foobar_result = _play_with_foobar2000(str(playlist_path))
@@ -392,13 +354,8 @@ def play_by_emotion(emotion: str) -> str:
     """播放指定情绪的所有歌曲（如"播放开心的歌"、"播放安静的歌曲"）。
     emotion 为情绪英文名（happy/sad/energetic/calm/romantic/nostalgic/angry/focus/party）。
     创建 M3U8 播放列表并通过 foobar2000 播放，返回播放结果（JSON格式）。"""
-    import yaml
-    from agents.librarian import LibrarianAgent
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    agent = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    agent = get_librarian()
 
     if not agent.songs:
         agent.scan_library()
@@ -430,6 +387,8 @@ def play_by_emotion(emotion: str) -> str:
                            "message": f"暂无标记为「{emotion_display}」的歌曲。请先运行「分析情绪」来分析你的音乐库。"},
                           ensure_ascii=False)
 
+    from graph.utils import load_config
+    config = load_config()
     playlist_name = f"{emotion_display}_{len(matched_objects)}首"
     playlist_path = _create_m3u8_playlist(matched_objects, playlist_name, config)
     foobar_result = _play_with_foobar2000(str(playlist_path))

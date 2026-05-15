@@ -36,7 +36,8 @@ def daily_scout_job():
     config = load_config()
     
     # 初始化Agent
-    librarian = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    librarian = get_librarian(config)
     scout = ScoutAgent(config)
     curator = CuratorAgent(config, librarian)
     

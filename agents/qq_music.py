@@ -28,79 +28,41 @@ class QQMusicAPI:
         self.cache: Dict[str, Dict] = {}
     
     def search_song(self, title: str, artist: str = None) -> Optional[Dict]:
-        """
-        搜索歌曲，返回最佳匹配结果（包含专辑信息）
-        
-        Returns:
-            {
-                "title": "歌曲名",
-                "artist": "歌手",
-                "album": "专辑名",
-                "album_id": "专辑ID",
-                "cover_url": "封面URL",
-                "year": 2023,
-                "genre": "流派"
-            }
-        """
         cache_key = f"{artist or ''}_{title}".lower()
         if cache_key in self.cache:
             return self.cache[cache_key]
-        
+
         try:
-            # 构建搜索关键词
-            if artist:
-                keyword = f"{artist} {title}"
-            else:
-                keyword = title
-            
+            keyword = f"{artist} {title}" if artist else title
+
             params = {
-                "ct": 24,
-                "qqmusic_ver": 1298,
-                "new_json": 1,
+                "ct": 24, "qqmusic_ver": 1298,
                 "remoteplace": "txt.yqq.song",
-                "searchid": "",
-                "t": 0,
-                "aggr": 1,
-                "cr": 1,
-                "catZhida": 1,
-                "lossless": 0,
-                "flag_qc": 0,
-                "p": 1,
-                "n": 10,
-                "w": keyword,
-                "g_tk": 5381,
-                "format": "json",
+                "t": 0, "aggr": 1, "cr": 1, "catZhida": 1,
+                "lossless": 0, "flag_qc": 0, "p": 1, "n": 10,
+                "w": keyword, "format": "json",
             }
-            
-            response = requests.get(
-                self.search_url,
-                params=params,
-                headers=self.headers,
-                timeout=10
-            )
-            
-            if response.status_code != 200:
+
+            resp = requests.get(self.search_url, params=params, headers=self.headers, timeout=10)
+            if resp.status_code != 200:
                 return None
-            
-            data = response.json()
-            
+
+            data = resp.json()
             if data.get("code") != 0:
                 return None
-            
+
             songs = data.get("data", {}).get("song", {}).get("list", [])
             if not songs:
                 return None
-            
-            # 找到最佳匹配
-            best_match = self._find_best_match(songs, title, artist)
-            if not best_match:
+
+            best = self._find_best_match(songs, title, artist)
+            if not best:
                 return None
-            
-            # 提取信息
-            result = self._extract_song_info(best_match)
+
+            result = self._extract_song_info(best)
             self.cache[cache_key] = result
             return result
-            
+
         except Exception as e:
             print(f"  QQ音乐搜索失败: {e}")
             return None
@@ -109,13 +71,14 @@ class QQMusicAPI:
         """找到最佳匹配的歌曲"""
         title_lower = title.lower()
         artist_lower = (artist or "").lower()
-        
+
         best_score = 0
         best_match = None
-        
+
         for song in songs:
             song_title = song.get("songname", "")
-            song_artist = song.get("singer", [{}])[0].get("name", "") if song.get("singer") else ""
+            singer_list = song.get("singer", [])
+            song_artist = singer_list[0].get("name", "") if singer_list else ""
             
             # 计算匹配分数
             score = 0
@@ -149,12 +112,13 @@ class QQMusicAPI:
         # 专辑信息
         album_info = song.get("album", {})
         album_name = album_info.get("name", "")
-        album_id = album_info.get("mid", "") or album_info.get("id", "")
-        
+        album_id = song.get("albummid", "")
+
         # 封面 URL（使用专辑封面）
         # QQ 音乐封面格式：https://y.gtimg.cn/music/photo_new/T002R300x300M000{album_mid}.jpg
+        # 纯数字 id 无效，不拼封面 URL
         cover_url = ""
-        if album_id:
+        if album_id and not album_id.isdigit():
             cover_url = f"https://y.gtimg.cn/music/photo_new/T002R300x300M000{album_id}.jpg"
         elif album_info.get("pmid"):
             cover_url = f"https://y.gtimg.cn/music/photo_new/T002R300x300M000{album_info.get('pmid')}.jpg"

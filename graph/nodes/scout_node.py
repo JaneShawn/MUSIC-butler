@@ -8,13 +8,7 @@ from langgraph.prebuilt import create_react_agent
 from graph.state import MusicAgentState
 from graph.kimi_adapter import KimiChatModel
 from graph.tools.scout_tools import SCOUT_TOOLS
-
-def _msg_content(msg) -> str:
-    """从 dict 或 LangChain BaseMessage 中安全提取文本内容。"""
-    if isinstance(msg, dict):
-        return msg.get("content", "") or ""
-    return getattr(msg, "content", "") or ""
-
+from graph.utils import msg_content
 
 SCOUT_SYSTEM_PROMPT = """你是音乐侦察兵，负责从外部源发现新音乐。你的职责：
 
@@ -31,7 +25,9 @@ _agent = None
 def _get_agent():
     global _agent
     if _agent is None:
-        llm = KimiChatModel(model="moonshot-v1-8k", temperature=0.5, max_tokens=1000)
+        from graph.utils import load_config
+        model = load_config().get("llm", {}).get("model", "moonshot-v1-8k")
+        llm = KimiChatModel(model=model, temperature=0.5, max_tokens=1000)
         _agent = create_react_agent(
             model=llm,
             tools=SCOUT_TOOLS,
@@ -49,7 +45,7 @@ def scout_node(state: MusicAgentState) -> Dict[str, Any]:
         return {"final_response": "请告诉我你想发现什么样的音乐。",
                 "agent_trace": state.get("agent_trace", []) + ["scout: no input"]}
 
-    user_input = _msg_content(messages[-1])
+    user_input = msg_content(messages[-1])
 
     agent = _get_agent()
     result = agent.invoke({"messages": [("user", user_input)]})

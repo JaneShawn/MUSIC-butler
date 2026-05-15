@@ -6,9 +6,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from dotenv import load_dotenv
-load_dotenv()
-
 import streamlit as st
 import yaml
 from datetime import datetime
@@ -55,7 +52,8 @@ def init_playlist_engine(_librarian):
     from core.playlist_engine import SmartPlaylistEngine
     from core.kimi_client import KimiClient
     try:
-        kimi = KimiClient()
+        from graph.utils import load_config
+        kimi = KimiClient(config=load_config())
     except ValueError:
         kimi = None
     return SmartPlaylistEngine(librarian=_librarian, kimi_client=kimi)

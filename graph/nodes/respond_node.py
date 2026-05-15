@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """Respond 节点 — 格式化最终回复并处理简单指令"""
+from pathlib import Path
 from typing import Dict, Any
 
 from graph.state import MusicAgentState
+from graph.utils import load_config
+from core.folder_watcher import FolderWatcher
 
-
-def _msg_content(msg) -> str:
-    """从 dict 或 LangChain BaseMessage 中安全提取文本内容。"""
-    if isinstance(msg, dict):
-        return msg.get("content", "") or ""
-    return getattr(msg, "content", "") or ""
+_watcher = None
 
 
 def respond_node(state: MusicAgentState) -> Dict[str, Any]:
@@ -36,6 +34,9 @@ def respond_node(state: MusicAgentState) -> Dict[str, Any]:
         return {"final_response": "再见！享受音乐！🎶",
                 "agent_trace": trace}
 
+    if intent == "scan":
+        return _handle_scan(trace)
+
     # show_language_stats
     if intent == "show_language_stats":
         return _show_language_stats(state, trace)
@@ -44,34 +45,107 @@ def respond_node(state: MusicAgentState) -> Dict[str, Any]:
     if intent == "analyze_emotion":
         return _show_emotion_stats(state, trace)
 
-    # play / play_by_name / play_by_artist / play_all
-    if intent in ("play", "play_by_name", "play_by_artist", "play_all"):
-        return _handle_play(intent, params, trace)
+    # cancel — 取消待确认操作
+    if intent == "cancel":
+        return {"final_response": "✅ 已取消。有什么可以帮你的？",
+                "agent_trace": trace}
 
-    # 默认：如果有待确认操作
+    # monitor — 文件监控
+    if intent == "monitor":
+        return _handle_monitor(params, trace)
+
+    # 库统计
+    if intent == "show_library_stats":
+        try:
+            from agents.librarian import get_librarian
+            agent = get_librarian()
+            stats = agent.get_stats()
+            lines = [
+                "📊 音乐库统计",
+                "=" * 30,
+                f"  总歌曲数: {stats.get('total_songs', 0)}",
+                f"  总艺术家: {stats.get('total_artists', 0)}",
+                f"  总流派数: {stats.get('total_genres', 0)}",
+            ]
+            return {"final_response": "\n".join(lines), "agent_trace": trace}
+        except Exception:
+            return {"final_response": "📊 无法获取库统计，请先执行「扫描」。",
+                    "agent_trace": trace}
+
+    # 歌单相关
+    if intent == "list_playlists":
+        return {"final_response": "📋 播放列表保存在音乐库的 Playlists/ 目录下。\n"
+                "创建歌单：说「创建一个运动时听的歌单」或「创建一个开心的歌单」。",
+                "agent_trace": trace}
+    if intent in ("playlist", "smart_playlist"):
+        return {"final_response": '📋 创建智能歌单：告诉我场景（如「运动」）或情绪（如「开心」），'
+                '我会从你的音乐库中自动筛选匹配的歌曲生成播放列表。',
+                "agent_trace": trace}
+
+    # 模型管理
+    if intent == "list_models":
+        from core.vector_store import EMBEDDING_MODELS
+        return {"final_response": f"📊 可用 Embedding 模型：\n" +
+                "\n".join(f"  • {k}: {v}" for k, v in EMBEDDING_MODELS.items()),
+                "agent_trace": trace}
+    if intent == "switch_model":
+        return {"final_response": "🔄 切换模型：输入「切换模型 <模型名>」来更换 embedding 模型。\n"
+                "查看可用模型：输入「模型列表」。",
+                "agent_trace": trace}
+    if intent == "current_model":
+        return {"final_response": "📊 查看当前模型：当前使用的 embedding 模型信息。\n"
+                "输入「模型列表」查看所有可用模型。",
+                "agent_trace": trace}
+
+    # 纠错类
+    if intent in ("correct_language", "correct_emotion"):
+        target = "语言" if intent == "correct_language" else "情绪"
+        return {"final_response": f"✏️ 纠正{target}：说「标记 歌手 - 歌名 为 {target}标签」。\n"
+                f"例如：「标记 周杰伦 - 晴天 为 国语」或「标记 周杰伦 - 晴天 为 怀旧」。",
+                "agent_trace": trace}
+
+    # 元数据类
+    if intent == "update_song_info":
+        return {"final_response": "✏️ 更新歌曲信息：说「更新 歌名 的 字段 为 值」。\n"
+                "例如：「更新 晴天 的 语言 为 国语」或「更新 晴天 的 情绪 为 怀旧」。",
+                "agent_trace": trace}
+    if intent in ("detect_single_language", "analyze_single_emotion"):
+        target = "语言" if intent == "detect_single_language" else "情绪"
+        return {"final_response": f"🔍 单曲{target}检测：输入「检测 歌手 - 歌名 的{target}」。\n"
+                "批量检测：输入「语言分布」或「分析情绪」。",
+                "agent_trace": trace}
+
+    # 导入导出
+    if intent == "export_library":
+        return {"final_response": "📤 导出音乐库：目前支持导出为 CSV 格式。\n"
+                "包含歌曲名、艺术家、专辑、语言、情绪等字段。",
+                "agent_trace": trace}
+    if intent == "import_library":
+        return {"final_response": "📥 导入音乐库：将 CSV 文件放入音乐库目录后执行「扫描」即可。",
+                "agent_trace": trace}
+
+    # 格式转换
+    if intent == "convert":
+        return {"final_response": "🔄 音频格式转换：支持 FLAC/WAV/APE → MP3。\n"
+                "将文件放入音乐库目录后，系统会自动检测并转换。",
+                "agent_trace": trace}
+
+    # 歌词
+    if intent in ("download_lyrics", "generate_lyrics_whisper"):
+        return {"final_response": "📝 歌词功能：支持在线下载歌词或通过 Whisper 从音频生成歌词。\n"
+                "在歌曲详情中可以查看已有歌词。",
+                "agent_trace": trace}
+
+    # 确认操作提示
     if state.get("requires_confirmation"):
         return {
             "final_response": state.get("final_response", "请确认此操作：回复'确认'执行，'取消'放弃。"),
             "agent_trace": trace,
         }
 
-    # 兜底：用 LLM 生成通用回复
-    user_input = ""
-    if messages:
-        user_input = _msg_content(messages[-1])
-
-    if not user_input:
-        return {"final_response": "有什么可以帮你的？试试搜索歌曲、发现新音乐或整理音乐库。",
-                "agent_trace": trace}
-
-    try:
-        from graph.kimi_adapter import KimiChatModel
-        llm = KimiChatModel(model="moonshot-v1-8k", temperature=0.7, max_tokens=500)
-        response = llm.invoke(f"用户说：{user_input}\n请用中文友好回复，20字以内。")
-        reply = response.content if hasattr(response, 'content') else str(response)
-        return {"final_response": reply, "agent_trace": trace}
-    except Exception:
-        return {"final_response": _default_reply(user_input), "agent_trace": trace}
+    # 最终兜底 — 不再调 LLM，避免胡编
+    return {"final_response": "有什么可以帮你的？试试搜索歌曲、播放音乐或管理音乐库。输入「帮助」查看全部功能。",
+            "agent_trace": trace}
 
 
 def _help_text() -> str:
@@ -104,46 +178,29 @@ def _help_text() -> str:
 
 
 def _show_language_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]:
-    """语言统计"""
-    from core.language_detector import detector
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
-    agent = LibrarianAgent(config)
-    for song in agent.songs.values():
-        detector.detect(song.title, song.artist, song.file_path)
-
-    stats = detector.get_stats()
+    from core.music_library_db import get_library_db
+    lib_db = get_library_db()
+    records = lib_db.list_all()
+    stats = {}
+    for rec in records:
+        lang = rec.language or "未知"
+        stats[lang] = stats.get(lang, 0) + 1
     total = sum(stats.values())
-
     lines = ["📊 歌曲语言分布统计", "=" * 40]
-    for lang, count in stats.items():
+    for lang, count in sorted(stats.items(), key=lambda x: -x[1]):
         bar = "█" * (count * 30 // total if total > 0 else 0)
         lines.append(f"  {lang:6} | {bar:30} | {count}首")
     lines.append("=" * 40)
     lines.append(f"总计: {total} 首")
-    lines.append("\n💡 输入「有哪些韩语歌」查询特定语言歌曲")
-
     return {"final_response": "\n".join(lines), "agent_trace": trace}
 
 
 def _show_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]:
     """情绪统计"""
     from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
+    from agents.librarian import get_librarian
 
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
-    agent = LibrarianAgent(config)
+    agent = get_librarian()
     analyzer = SimpleEmotionAnalyzer()
 
     emotion_stats = {}
@@ -174,19 +231,87 @@ def _show_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]:
     return {"final_response": "\n".join(lines), "agent_trace": trace}
 
 
-def _handle_play(intent: str, params: dict, trace: list) -> Dict[str, Any]:
-    """播放指令 — 所有播放请求现在由 librarian 节点的 react agent 处理。
-    此函数仅在播放请求无法路由到 librarian 时作为兜底。"""
-    song_hint = params.get("song_name") or params.get("artist") or params.get("title_hint") or ""
-    if song_hint:
-        return {"final_response": f"🎵 正在尝试播放: {song_hint}\n请确保 foobar2000 已安装。",
-                "agent_trace": trace}
-    return {"final_response": "🎵 播放功能需要指定歌曲名或歌手。试试「播放晴天」或「播放周杰伦的歌」。",
-            "agent_trace": trace}
 
 
-def _default_reply(user_input: str) -> str:
-    """默认回复"""
-    if any(w in user_input for w in ["你好", "嗨", "hello", "hi", "在吗"]):
-        return "你好！我是你的音乐助手。想听什么歌，或者需要管理音乐库吗？"
-    return f"收到！你可以试试：搜索歌曲、查看语言分布、分析情绪、发现新音乐。输入「帮助」看更多。"
+
+def _handle_scan(trace: list) -> Dict[str, Any]:
+    """直接执行扫描，不经过 LLM"""
+    try:
+        from agents.librarian import get_librarian
+        agent = get_librarian(config)
+        result = agent.scan_library()
+        total = result.get("total_files", 0)
+        new_songs = result.get("new_songs", 0)
+        indexed = result.get("total_indexed", 0)
+        lines = [
+            "🔍 扫描完成！",
+            "=" * 30,
+            f"  扫描文件: {total} 个",
+            f"  新增歌曲: {new_songs} 首",
+            f"  已索引总数: {indexed} 首",
+        ]
+        return {"final_response": "\n".join(lines), "agent_trace": trace + ["respond: scan done"]}
+    except Exception as e:
+        return {"final_response": f"⚠️ 扫描失败: {e}",
+                "agent_trace": trace + ["respond: scan failed"]}
+
+
+def _handle_monitor(params: dict, trace: list) -> Dict[str, Any]:
+    """启动/停止文件监控"""
+    global _watcher
+    action = params.get("action", "")
+
+    if action == "stop":
+        if _watcher is not None and _watcher.is_running:
+            _watcher.stop()
+            _watcher = None
+            return {"final_response": "🔍 文件监控已停止。",
+                    "agent_trace": trace + ["respond: monitor stopped"]}
+        return {"final_response": "🔍 文件监控未在运行。",
+                "agent_trace": trace + ["respond: monitor not running"]}
+
+    if action == "start":
+        if _watcher is not None and _watcher.is_running:
+            dirs = _watcher._watch_dirs
+            return {"final_response": f"🔍 文件监控已在运行中。\n监控目录: {', '.join(dirs)}",
+                    "agent_trace": trace + ["respond: monitor already running"]}
+        try:
+            from agents.librarian import get_librarian
+            config = load_config()
+            library_path = config.get("library", {}).get("path", "")
+            if not library_path:
+                return {"final_response": "⚠️ 未配置音乐库路径，请检查 config.yaml。",
+                        "agent_trace": trace + ["respond: monitor no path"]}
+
+            watch_dirs = [
+                str(Path(library_path) / "MUSIC"),
+                str(Path(library_path) / "ALBUM"),
+            ]
+            # 只监控实际存在的目录
+            existing = [d for d in watch_dirs if Path(d).exists() and Path(d).is_dir()]
+            if not existing:
+                return {"final_response": f"⚠️ 监控目录不存在:\n  {watch_dirs[0]}\n  {watch_dirs[1]}\n请确认音乐库路径配置正确。",
+                        "agent_trace": trace + ["respond: monitor dirs not found"]}
+
+            librarian = get_librarian(config)
+            _watcher = FolderWatcher(watch_dirs=existing)
+            _watcher.set_librarian(librarian)
+            _watcher.start()
+            return {"final_response": f"🔍 文件监控已启动。\n监控目录:\n  " + "\n  ".join(existing) +
+                    "\n添加新歌曲到监控目录后会自动扫描入库。",
+                    "agent_trace": trace + ["respond: monitor started"]}
+        except Exception as e:
+            return {"final_response": f"⚠️ 启动监控失败: {e}",
+                    "agent_trace": trace + ["respond: monitor start failed"]}
+
+    # 无 action — 返回当前状态
+    if _watcher is not None and _watcher.is_running:
+        dirs = _watcher._watch_dirs
+        return {"final_response": f"🔍 文件监控运行中。\n监控目录:\n  " + "\n  ".join(dirs) +
+                "\n输入「关闭监控」停止。",
+                "agent_trace": trace + ["respond: monitor status"]}
+    return {"final_response": "🔍 文件监控未启动。输入「开启监控」自动监听音乐库目录，「关闭监控」停止。",
+            "agent_trace": trace + ["respond: monitor status"]}
+
+
+

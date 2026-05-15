@@ -91,7 +91,7 @@ class LibrarianAgent(BaseAgent):
         
         # 初始化Kimi客户端（用于查询意图理解和元数据解析）
         try:
-            self.kimi = KimiClient()
+            self.kimi = KimiClient(config=self.config)
             self.has_llm = True
             self.log("info", "Kimi API initialized for Librarian")
         except ValueError:
@@ -136,7 +136,12 @@ class LibrarianAgent(BaseAgent):
         
         # 找出元数据不完整的歌曲
         with self._lock:
-            incomplete_songs = [s for s in self.songs.values() if s.artist == "Unknown" or s.title == "Unknown"]
+            incomplete_songs = [
+                s for s in self.songs.values()
+                if (s.artist == "Unknown" or s.title == "Unknown"
+                    or not s.album or s.album == "Unknown"
+                    or not LibrarianAgent.has_embedded_cover(s.file_path))
+            ]
         total_incomplete = len(incomplete_songs)
         
         if not incomplete_songs:
@@ -1165,3 +1170,19 @@ class LibrarianAgent(BaseAgent):
         print(f"  [语言分布] {dict(sorted(lang_stats.items(), key=lambda x: -x[1]))}")
         
         self.log("info", f"Indexed {len(songs)} songs to vector store")
+
+
+_librarian_instance = None
+
+
+def get_librarian(config: dict = None) -> "LibrarianAgent":
+    global _librarian_instance
+    if _librarian_instance is None:
+        if config is None:
+            import yaml
+            from pathlib import Path
+            config_path = Path(__file__).resolve().parent.parent / "config.yaml"
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+        _librarian_instance = LibrarianAgent(config)
+    return _librarian_instance

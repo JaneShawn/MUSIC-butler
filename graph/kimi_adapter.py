@@ -37,7 +37,8 @@ class KimiChatModel(BaseChatModel):
 
     def _get_client(self) -> KimiClient:
         if self._client is None:
-            self._client = KimiClient()
+            from graph.utils import load_config
+            self._client = KimiClient(config=load_config())
         return self._client
 
     def bind_tools(

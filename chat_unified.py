@@ -11,6 +11,7 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import datetime
 
 current_dir = Path(__file__).parent
 env_path = current_dir / ".env"
@@ -19,78 +20,27 @@ if env_path.exists():
 else:
     load_dotenv()
 
-import yaml
-from datetime import datetime
-
-from chat.handlers import (
-    FixHandlers, DiscoverHandlers, PlayHandlers, AnalyzeHandlers,
-    ManageHandlers, OpsHandlers, InfoHandlers,
-)
-
 # ── LangGraph 入口 ──
 from graph.graph import music_graph
+from graph.utils import load_config
 from langchain_core.messages import HumanMessage
 
 
-class MusicAgentChat(FixHandlers, DiscoverHandlers, PlayHandlers, AnalyzeHandlers,
-                      ManageHandlers, OpsHandlers, InfoHandlers):
-    """对话入口 — LangGraph 多Agent 系统的薄包装层。
-
-    保留 Handler mixin 继承以兼容 scripts/ 和 web UI 中的直接方法调用。
-    交互式对话的 run() 方法已迁移到 LangGraph 图。
-    """
+class MusicAgentChat:
+    """对话入口 — LangGraph 多Agent 系统的薄包装层。"""
 
     def __init__(self):
         print("Initializing Music Agent (LangGraph)...")
 
-        config_path = current_dir / "config.yaml"
-        with open(config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
-
+        self.config = load_config()
         self.graph = music_graph
         self.thread_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # 延迟初始化的属性（保持与旧版兼容）
-        self._librarian = None
-        self._organizer = None
-        self._scout = None
-        self._curator = None
-        self.kimi = None
 
         # 上下文兼容（旧代码引用 self.context 时不报错）
         from chat.context import ContextManager
         self.context = ContextManager(session_file=current_dir / "chat_session.json")
 
         print("Music Agent ready! (LangGraph backend)")
-
-    # ── Agent 惰性属性（scripts/ 中直接调用时使用） ──
-    @property
-    def librarian(self):
-        if self._librarian is None:
-            from agents import LibrarianAgent
-            self._librarian = LibrarianAgent(self.config)
-        return self._librarian
-
-    @property
-    def organizer(self):
-        if self._organizer is None:
-            from agents import OrganizerAgent
-            self._organizer = OrganizerAgent(self.config, self.librarian)
-        return self._organizer
-
-    @property
-    def scout(self):
-        if self._scout is None:
-            from agents import ScoutAgent
-            self._scout = ScoutAgent(self.config)
-        return self._scout
-
-    @property
-    def curator(self):
-        if self._curator is None:
-            from agents import CuratorAgent
-            self._curator = CuratorAgent(self.config, self.librarian)
-        return self._curator
 
     # ── 对话接口 ──
     def chat(self, user_input: str) -> str:

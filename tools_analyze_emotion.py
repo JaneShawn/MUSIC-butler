@@ -37,7 +37,8 @@ def main():
         config = yaml.safe_load(f)
     
     print("\n[1/4] Initializing music library...")
-    librarian = LibrarianAgent(config)
+    from agents.librarian import get_librarian
+    librarian = get_librarian(config)
     
     if not librarian.songs:
         print("正在扫描音乐文件...")
@@ -50,7 +51,8 @@ def main():
     kimi = None
     if KimiClient:
         try:
-            kimi = KimiClient()
+            from graph.utils import load_config
+            kimi = KimiClient(config=load_config())
             print("[OK] Kimi API connected")
         except (ValueError, Exception):
             print("[WARN] Kimi API not available")

@@ -38,6 +38,9 @@ scout:
     - "Cpop"
   check_interval_hours: 24
   max_candidates_per_run: 20
+  reddit_client_id: ""
+  reddit_client_secret: ""
+  reddit_user_agent: "MusicAgent/1.0"
   
 # Curator Agent配置
 curator:
@@ -51,8 +54,11 @@ organizer:
   filename_template: "{artist} - {title}"  # 文件名模板
   keep_original: false  # false=移动, true=复制
   
+# Kimi API Key
 # LLM配置
 llm:
   model: "moonshot-v1-8k"
   temperature: 0.7
   max_tokens: 1000
+
+# kimi_api_key 请设置环境变量 KIMI_API_KEY 或在 .env 文件中配置

@@ -4,13 +4,7 @@ from typing import Dict, Any
 
 from graph.state import MusicAgentState
 from graph.tools.organizer_tools import organize_files, dedup_files, analyze_structure
-
-
-def _msg_content(msg) -> str:
-    """从 dict 或 LangChain BaseMessage 中安全提取文本内容。"""
-    if isinstance(msg, dict):
-        return msg.get("content", "") or ""
-    return getattr(msg, "content", "") or ""
+from graph.utils import msg_content
 
 
 def organizer_node(state: MusicAgentState) -> Dict[str, Any]:
@@ -21,7 +15,7 @@ def organizer_node(state: MusicAgentState) -> Dict[str, Any]:
 
     user_input = ""
     if messages:
-        user_input = _msg_content(messages[-1])
+        user_input = msg_content(messages[-1])
 
     trace = state.get("agent_trace", []) + ["organizer: running"]
 
@@ -57,6 +51,6 @@ def organizer_node(state: MusicAgentState) -> Dict[str, Any]:
     return {
         "final_response": f"📋 整理计划预览（未执行）：\n{result}\n\n⚠️ 确认执行请回复'确认'，取消请回复'取消'。",
         "requires_confirmation": True,
-        "pending_action": {"action": "organize", "params": params, "description": "执行文件整理"},
+        "pending_action": {"action_type": "organize", "params": params, "description": "执行文件整理"},
         "agent_trace": trace + ["organizer: awaiting confirmation"],
     }

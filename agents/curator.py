@@ -40,7 +40,7 @@ class CuratorAgent(BaseAgent):
         
         # 初始化Kimi客户端
         try:
-            self.kimi = KimiClient()
+            self.kimi = KimiClient(config=self.config)
             self.has_llm = True
             self.log("info", "Kimi API initialized")
         except ValueError as e:

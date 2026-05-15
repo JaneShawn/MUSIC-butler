@@ -1,8 +1,8 @@
 """
 Kimi API 客户端
 """
-import os
 import json
+import os
 import time
 from typing import Optional, List, Dict, Any
 import httpx
@@ -12,19 +12,22 @@ class KimiClient:
     """
     Kimi API 客户端封装
     """
-    
+
     BASE_URL = "https://api.moonshot.cn/v1"
-    
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("KIMI_API_KEY")
+
+    def __init__(self, config: dict = None):
+        if config is None:
+            from graph.utils import load_config
+            config = load_config()
+        self.api_key = config.get("kimi_api_key") or os.getenv("KIMI_API_KEY")
         if not self.api_key:
-            raise ValueError("KIMI_API_KEY not found. Please set it in .env file")
-        
+            raise ValueError("kimi_api_key not found in config.yaml or KIMI_API_KEY env var")
+
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        self.model = "moonshot-v1-8k"
+        self.model = config.get("llm", {}).get("model", "moonshot-v1-8k")
     
     def chat(self,
              messages: List[Dict[str, str]],

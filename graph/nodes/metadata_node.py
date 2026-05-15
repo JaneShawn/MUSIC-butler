@@ -14,7 +14,7 @@ def metadata_node(state: MusicAgentState) -> Dict[str, Any]:
     trace = state.get("agent_trace", []) + ["metadata: running"]
 
     # 诊断
-    if intent in ("diagnose", "fix_metadata_issues"):
+    if intent == "diagnose":
         return _run_diagnose(trace)
 
     # 同步情绪缓存
@@ -26,7 +26,7 @@ def metadata_node(state: MusicAgentState) -> Dict[str, Any]:
         return _run_fix_single(params, trace)
 
     # 批量修复（需要确认）
-    if intent == "fix_metadata":
+    if intent in ("fix_metadata", "fix_metadata_issues"):
         if state.get("requires_confirmation") and state.get("pending_action"):
             return _execute_fix_metadata(params, trace)
         return _preview_fix_metadata(trace)
@@ -34,20 +34,13 @@ def metadata_node(state: MusicAgentState) -> Dict[str, Any]:
     return {"final_response": "元数据操作完成。", "agent_trace": trace}
 
 
-def _run_diagnose(trace: list) -> Dict[str, Any]:
-    """诊断元数据完整性"""
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
+def _collect_missing_metadata():
+    """共用：扫描音乐库，返回 (stats, incomplete_list)"""
+    from agents.librarian import get_librarian
 
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
-    agent = LibrarianAgent(config)
+    agent = get_librarian()
     stats = agent.get_stats()
 
-    # 统计缺失元数据
     incomplete = []
     for song in agent.songs.values():
         issues = []
@@ -55,10 +48,10 @@ def _run_diagnose(trace: list) -> Dict[str, Any]:
             issues.append("缺艺术家")
         if song.title == "Unknown" or not song.title:
             issues.append("缺标题")
-        if not song.genre:
-            issues.append("缺流派")
-        if not song.year or song.year == 0:
-            issues.append("缺年份")
+        if not song.album or song.album == "Unknown":
+            issues.append("缺专辑")
+        if not LibrarianAgent.has_embedded_cover(song.file_path):
+            issues.append("缺封面")
         if issues:
             incomplete.append({
                 "file": song.file_path,
@@ -66,7 +59,12 @@ def _run_diagnose(trace: list) -> Dict[str, Any]:
                 "title": song.title,
                 "issues": issues,
             })
+    return stats, incomplete
 
+
+def _format_diagnose_report(stats: dict, incomplete: list) -> str:
+    """将诊断数据格式化为报告文本"""
+    from pathlib import Path
     response = f"""📊 元数据诊断报告
 
 总歌曲: {stats['total_songs']} 首
@@ -83,30 +81,39 @@ def _run_diagnose(trace: list) -> Dict[str, Any]:
             response += f"  • {fname}: {issues_str}\n"
         response += f"\n💡 输入「一键修复」开始修复（共 {len(incomplete)} 首）"
 
+    return response
+
+
+def _run_diagnose(trace: list) -> Dict[str, Any]:
+    """诊断元数据完整性"""
+    stats, incomplete = _collect_missing_metadata()
+    response = _format_diagnose_report(stats, incomplete)
     return {"final_response": response, "agent_trace": trace + ["metadata: diagnose done"]}
 
 
 def _preview_fix_metadata(trace: list) -> Dict[str, Any]:
-    """预览修复"""
+    """先诊断，列出缺什么，再附确认提示"""
+    stats, incomplete = _collect_missing_metadata()
+    report = _format_diagnose_report(stats, incomplete)
+    if incomplete:
+        report += f"\n\n🔧 确认后将尝试修复以上 {len(incomplete)} 首歌曲的元数据。"
+    else:
+        report += "\n\n🎉 所有歌曲元数据完整，无需修复！"
+        return {"final_response": report, "agent_trace": trace + ["metadata: all complete"]}
+    report += "\n⚠️ 确认执行请回复'确认'，取消请回复'取消'。"
     return {
-        "final_response": "🔧 将修复缺失的元数据（包括艺术家名、歌名、流派、年份）。\n\n⚠️ 确认执行请回复'确认'，取消请回复'取消'。",
+        "final_response": report,
         "requires_confirmation": True,
-        "pending_action": {"action": "fix_metadata", "params": {}, "description": "批量修复元数据"},
+        "pending_action": {"action_type": "fix_metadata", "params": {}, "description": "批量修复元数据"},
         "agent_trace": trace + ["metadata: awaiting confirmation"],
     }
 
 
 def _execute_fix_metadata(params: dict, trace: list) -> Dict[str, Any]:
     """执行元数据修复"""
-    from agents.librarian import LibrarianAgent
-    import yaml
-    from pathlib import Path
+    from agents.librarian import get_librarian
 
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
-    agent = LibrarianAgent(config)
+    agent = get_librarian()
     result = agent.run("fix_metadata", dry_run=False)
     return {
         "final_response": f"✅ 元数据修复完成！\n处理: {result.get('fixed', 0)} 首",
@@ -147,17 +154,11 @@ def _run_sync_emotion(trace: list) -> Dict[str, Any]:
 
 def _run_fix_single(params: dict, trace: list) -> Dict[str, Any]:
     """修复单首歌曲"""
-    from agents.librarian import LibrarianAgent
+    from agents.librarian import get_librarian
     from agents.metadata_enhancer import MetadataEnhancer
-    from pathlib import Path
-    import yaml
-
-    config_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
 
     file_hint = params.get("file", params.get("song_name", ""))
-    agent = LibrarianAgent(config)
+    agent = get_librarian()
 
     # 查找匹配
     matched = None
@@ -171,10 +172,13 @@ def _run_fix_single(params: dict, trace: list) -> Dict[str, Any]:
                 "agent_trace": trace + ["metadata: fix_single not found"]}
 
     enhancer = MetadataEnhancer(kimi_client=agent.kimi)
-    metadata = enhancer.search_by_filename(Path(matched.file_path).name)
+    metadata = enhancer.search_by_filename(Path(matched.file_path).name, download_cover=True)
     if metadata and metadata.get("title") and metadata.get("artist"):
         matched.artist = metadata["artist"]
         matched.title = metadata["title"]
+        if metadata.get("album"):
+            matched.album = metadata["album"]
+        agent._write_metadata_to_file(matched, cover_path=metadata.get("cover_path"))
         return {"final_response": f"✅ 已修复: {metadata['artist']} - {metadata['title']}",
                 "agent_trace": trace + ["metadata: fix_single done"]}
 

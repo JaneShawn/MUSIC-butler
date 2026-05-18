@@ -62,8 +62,6 @@ def route_by_intent(state) -> str:
         "export_library": "respond",
         "import_library": "respond",
         "convert": "respond",
-        "download_lyrics": "respond",
-        "generate_lyrics_whisper": "respond",
         "monitor": "respond",
         "scan": "respond",
     }

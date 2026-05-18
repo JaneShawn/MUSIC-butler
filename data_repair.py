@@ -154,16 +154,14 @@ def step3_emotion():
     
     from agents.librarian import get_librarian
     from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
-    from core.lyrics_fetcher import LyricsFetcher
     import yaml
-    
+
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    
+
     librarian = get_librarian(config)
     analyzer = SimpleEmotionAnalyzer()
-    fetcher = LyricsFetcher(lyrics_dir="data/lyrics")
     
     songs = list(librarian.songs.values())
     total = len(songs)
@@ -173,7 +171,6 @@ def step3_emotion():
     
     analyzed = 0
     cached = 0
-    no_lyrics = 0
     errors = 0
     
     for i, song in enumerate(songs, 1):
@@ -186,22 +183,12 @@ def step3_emotion():
                     print(f"  进度: {i}/{total} (缓存命中 {cached} 首)")
                 continue
             
-            # 获取歌词
-            lyrics = fetcher._from_lyrics_dir(song.title, song.artist)
-            if not lyrics:
-                lyrics = fetcher.fetch(song.title, song.artist, song.file_path)
-            
-            if not lyrics:
-                no_lyrics += 1
-                # 无歌词也用元数据推断分析
-                result = analyzer.analyze(song.file_path, lyrics=None, title=song.title, artist=song.artist)
-            else:
-                result = analyzer.analyze(song.file_path, lyrics=lyrics, title=song.title, artist=song.artist)
+            result = analyzer.analyze(song.file_path, lyrics=None, title=song.title, artist=song.artist)
             
             analyzed += 1
             
             if i % 20 == 0 or i == total:
-                print(f"  进度: {i}/{total} (已分析 {analyzed} 首, 缓存 {cached} 首, 无歌词 {no_lyrics} 首)")
+                print(f"  进度: {i}/{total} (已分析 {analyzed} 首, 缓存 {cached} 首)")
                 
         except Exception as e:
             errors += 1

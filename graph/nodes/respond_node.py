@@ -130,12 +130,6 @@ def respond_node(state: MusicAgentState) -> Dict[str, Any]:
                 "将文件放入音乐库目录后，系统会自动检测并转换。",
                 "agent_trace": trace}
 
-    # 歌词
-    if intent in ("download_lyrics", "generate_lyrics_whisper"):
-        return {"final_response": "📝 歌词功能：支持在线下载歌词或通过 Whisper 从音频生成歌词。\n"
-                "在歌曲详情中可以查看已有歌词。",
-                "agent_trace": trace}
-
     # 确认操作提示
     if state.get("requires_confirmation"):
         return {

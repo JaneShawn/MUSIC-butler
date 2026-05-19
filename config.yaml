@@ -2,12 +2,11 @@
 library:
   path: "C:\\Users\\JaneShown\\Desktop\\music"
   supported_formats: [".flac", ".mp3", ".wav", ".m4a", ".ogg"]
-  
+
   # 文件监控目录（相对于 library.path，或填绝对路径）
   watch_dirs:
     - "MUSIC"
-    - "ALBUM"
-  
+
 # RAG配置
 rag:
   # Embedding模型选择：
@@ -23,7 +22,7 @@ rag:
   similarity_threshold: 0.5
   
   # 运行设备: "cpu" 或 "cuda"（需要GPU支持）
-  device: "cpu"
+  device: "cuda"
   
 # ChromaDB配置
 vector_store:

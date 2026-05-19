@@ -170,7 +170,6 @@ def _help_text() -> str:
 
 💡 输入 '退出' 结束对话"""
 
-
 def _show_language_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]:
     from core.music_library_db import get_library_db
     lib_db = get_library_db()
@@ -223,10 +222,6 @@ def _show_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]:
     lines.append(f"总计: {total} 首")
 
     return {"final_response": "\n".join(lines), "agent_trace": trace}
-
-
-
-
 
 def _handle_scan(trace: list) -> Dict[str, Any]:
     """直接执行扫描，不经过 LLM"""

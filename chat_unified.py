@@ -40,7 +40,41 @@ class MusicAgentChat:
         from chat.context import ContextManager
         self.context = ContextManager(session_file=current_dir / "chat_session.json")
 
+        # 自动启动文件监控
+        self._start_watcher()
+
         print("Music Agent ready! (LangGraph backend)")
+
+    def _start_watcher(self):
+        """启动文件监控，监听 config.yaml 中 library.watch_dirs 配置的目录"""
+        from core.folder_watcher import FolderWatcher
+        from agents.librarian import get_librarian
+
+        library_path = self.config.get("library", {}).get("path", "")
+        if not library_path:
+            print("  [监控] 未配置音乐库路径，跳过")
+            return
+
+        watch_entries = self.config.get("library", {}).get("watch_dirs", ["MUSIC", "ALBUM"])
+        watch_dirs = []
+        for d in watch_entries:
+            p = Path(d)
+            if not p.is_absolute():
+                p = Path(library_path) / d
+            watch_dirs.append(str(p))
+
+        existing = [d for d in watch_dirs if Path(d).exists() and Path(d).is_dir()]
+        if not existing:
+            print(f"  [监控] 目录不存在: {watch_dirs}，跳过")
+            return
+
+        try:
+            self._watcher = FolderWatcher(watch_dirs=existing)
+            self._watcher.set_librarian(get_librarian())
+            self._watcher.start()
+            print(f"  [监控] 已启动，监听 {len(existing)} 个目录")
+        except Exception as e:
+            print(f"  [监控] 启动失败: {e}")
 
     # ── 对话接口 ──
     def chat(self, user_input: str) -> str:
@@ -94,6 +128,8 @@ class MusicAgentChat:
                     continue
 
                 if user_input.lower() in ["exit", "quit", "q", "bye", "886", "退出", "再见"]:
+                    if hasattr(self, '_watcher') and self._watcher.is_running:
+                        self._watcher.stop()
                     print("\nGoodbye! Enjoy the music!")
                     break
 
@@ -101,6 +137,8 @@ class MusicAgentChat:
                 print(f"\nAssistant: {response}")
 
             except KeyboardInterrupt:
+                if hasattr(self, '_watcher') and self._watcher.is_running:
+                    self._watcher.stop()
                 print("\n\nGoodbye!")
                 break
             except Exception as e:

@@ -277,14 +277,18 @@ def _handle_monitor(params: dict, trace: list) -> Dict[str, Any]:
                 return {"final_response": "⚠️ 未配置音乐库路径，请检查 config.yaml。",
                         "agent_trace": trace + ["respond: monitor no path"]}
 
-            watch_dirs = [
-                str(Path(library_path) / "MUSIC"),
-                str(Path(library_path) / "ALBUM"),
-            ]
+            watch_entries = config.get("library", {}).get("watch_dirs", ["MUSIC", "ALBUM"])
+            watch_dirs = []
+            for d in watch_entries:
+                p = Path(d)
+                if not p.is_absolute():
+                    p = Path(library_path) / d
+                watch_dirs.append(str(p))
+
             # 只监控实际存在的目录
             existing = [d for d in watch_dirs if Path(d).exists() and Path(d).is_dir()]
             if not existing:
-                return {"final_response": f"⚠️ 监控目录不存在:\n  {watch_dirs[0]}\n  {watch_dirs[1]}\n请确认音乐库路径配置正确。",
+                return {"final_response": f"⚠️ 监控目录不存在:\n  " + "\n  ".join(watch_dirs) + "\n请确认 config.yaml 中 library.watch_dirs 配置正确。",
                         "agent_trace": trace + ["respond: monitor dirs not found"]}
 
             librarian = get_librarian(config)

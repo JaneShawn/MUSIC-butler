@@ -405,6 +405,129 @@ def _handle_query_context(
             "agent_trace": ["intent_router(context): batch select"],
         }
 
+    # 在结果里二次筛选（语言 / 情绪 / 歌手）
+    filtered = _filter_query_results(user_input, query_results)
+    if filtered is not None:
+        return filtered
+
+    return None
+
+
+def _filter_query_results(
+    user_input: str, query_results: List[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """检测「播放这些里的英文歌/悲伤的/Kanye的」等二次筛选指令，在 query_results 内过滤后播放。"""
+    u = user_input.strip()
+
+    # 必须含有「这些/里面/其中/当中/里的/结果」等上下文词，避免误拦截普通播放指令
+    context_words = ["这些", "里面", "其中", "当中", "里的", "结果里", "里头", "这几首", "这几个"]
+    if not any(w in u for w in context_words):
+        return None
+
+    from core.music_library_db import get_library_db
+    from core.language_constants import LANGUAGE_ALIAS
+
+    lib_db = get_library_db()
+
+    # ── 语言筛选 ──
+    language_keywords = {
+        "英文": "英语", "英语": "英语", "欧美": "英语",
+        "中文": "国语", "国语": "国语", "普通话": "国语",
+        "粤语": "粤语", "广东话": "粤语",
+        "日文": "日语", "日语": "日语",
+        "韩文": "韩语", "韩语": "韩语",
+    }
+    detected_lang = None
+    for kw, lang in language_keywords.items():
+        if kw in u:
+            detected_lang = lang
+            break
+
+    if detected_lang:
+        filtered = []
+        for item in query_results:
+            song = item.get("song")
+            if not song:
+                continue
+            record = lib_db.get_record(song.artist, song.title)
+            lang = record.language if record else None
+            if lang == detected_lang:
+                filtered.append(item)
+        if filtered:
+            return {
+                "intent": "play_all_results",
+                "task_params": {"items": filtered},
+                "agent_trace": [f"intent_router(context): filter by language={detected_lang}"],
+            }
+        return {
+            "intent": "respond",
+            "task_params": {"query": f"结果里没有{detected_lang}歌曲。"},
+            "final_response": f"这些歌曲里没有{detected_lang}的歌。",
+            "agent_trace": ["intent_router(context): filter by language, empty"],
+        }
+
+    # ── 情绪筛选 ──
+    emotion_keywords = {
+        "快乐": "happy", "高兴": "happy", "开心": "happy",
+        "悲伤": "sad", "难过": "sad", "伤感": "sad",
+        "激情": "energetic", "热血": "energetic",
+        "平静": "calm", "安静": "calm", "舒缓": "calm",
+        "浪漫": "romantic", "温柔": "romantic",
+        "怀旧": "nostalgic", "回忆": "nostalgic",
+        "愤怒": "angry",
+        "专注": "focus",
+        "派对": "party",
+    }
+    detected_emotion = None
+    detected_emotion_label = None
+    for kw, em in emotion_keywords.items():
+        if kw in u:
+            detected_emotion = em
+            detected_emotion_label = kw
+            break
+
+    if detected_emotion:
+        filtered = []
+        for item in query_results:
+            song = item.get("song")
+            if not song:
+                continue
+            record = lib_db.get_record(song.artist, song.title)
+            if record and record.emotion == detected_emotion:
+                filtered.append(item)
+        if filtered:
+            return {
+                "intent": "play_all_results",
+                "task_params": {"items": filtered},
+                "agent_trace": [f"intent_router(context): filter by emotion={detected_emotion}"],
+            }
+        return {
+            "intent": "respond",
+            "task_params": {},
+            "final_response": f"这些歌曲里没有标记为「{detected_emotion_label}」的歌。",
+            "agent_trace": ["intent_router(context): filter by emotion, empty"],
+        }
+
+    # ── 歌手筛选 ──
+    artist_match = re.search(r'(?:播放?)?(?:这些|里面|其中|当中|里的|结果里).*?([^\s的中英日韩]{2,}?)(?:的歌?|唱的)?$', u)
+    if artist_match:
+        artist_hint = artist_match.group(1).strip()
+        # 排除语气词/功能词误匹配
+        skip_words = {"英文", "中文", "日文", "韩文", "国语", "粤语", "英语", "日语", "韩语",
+                      "悲伤", "快乐", "开心", "浪漫", "怀旧", "激情", "平静", "愤怒"}
+        if artist_hint and artist_hint not in skip_words and len(artist_hint) >= 2:
+            filtered = []
+            for item in query_results:
+                song = item.get("song")
+                if song and artist_hint.lower() in song.artist.lower():
+                    filtered.append(item)
+            if filtered:
+                return {
+                    "intent": "play_all_results",
+                    "task_params": {"items": filtered},
+                    "agent_trace": [f"intent_router(context): filter by artist={artist_hint}"],
+                }
+
     return None
 
 

@@ -99,6 +99,9 @@ def librarian_node(state: MusicAgentState) -> Dict[str, Any]:
     if intent == "show_library_stats":
         return _handle_library_stats(trace)
 
+    if intent in ("play_all_results", "play_all_except"):
+        return _handle_play_items(intent, params, trace)
+
     if not messages:
         return {
             "final_response": "请告诉我你想做什么。",
@@ -264,3 +267,41 @@ def _handle_library_stats(trace: list) -> Dict[str, Any]:
     except Exception:
         return {"final_response": "📊 无法获取库统计，请先执行「扫描」。",
                 "agent_trace": trace + ["librarian: library_stats failed"]}
+
+
+def _handle_play_items(intent: str, params: dict, trace: list) -> Dict[str, Any]:
+    """直接播放 task_params 里指定的歌曲列表，不走 react agent。"""
+    from graph.tools.library_tools import _create_m3u8_playlist, _play_with_foobar2000
+    from graph.utils import load_config
+    from agents.librarian import Song
+
+    items = params.get("items") or params.get("songs", [])
+    if not items:
+        return {"final_response": "没有可播放的歌曲。", "agent_trace": trace + ["librarian: play_items empty"]}
+
+    # items 可能是 dict（来自 query_results）或直接是 Song 对象
+    songs = []
+    for item in items:
+        if isinstance(item, dict):
+            song = item.get("song")
+            if song:
+                songs.append(song)
+        else:
+            songs.append(item)
+
+    if not songs:
+        return {"final_response": "没有可播放的歌曲。", "agent_trace": trace + ["librarian: play_items no songs"]}
+
+    config = load_config()
+    playlist_name = f"精选_{len(songs)}首"
+    playlist_path = _create_m3u8_playlist(songs, playlist_name, config)
+    foobar_result = _play_with_foobar2000(str(playlist_path))
+
+    song_list = "\n".join(f"  {i+1}. {s.artist} - {s.title}" for i, s in enumerate(songs[:10]))
+    more = f"\n  ...共 {len(songs)} 首" if len(songs) > 10 else ""
+
+    msg = (f"🎵 正在播放 {len(songs)} 首歌曲：\n{song_list}{more}"
+           if foobar_result else
+           f"✅ 播放列表已创建（{len(songs)} 首）：\n{song_list}{more}\n💡 未找到 foobar2000，请手动播放")
+
+    return {"final_response": msg, "agent_trace": trace + ["librarian: play_items done"]}

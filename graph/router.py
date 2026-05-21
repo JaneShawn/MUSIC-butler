@@ -13,6 +13,7 @@ def route_by_intent(state) -> str:
         "play_by_name": "librarian",
         "play_by_artist": "librarian",
         "play_all": "librarian",
+        "play_random": "librarian",
         "play": "librarian",
         "play_all_results": "librarian",
         "play_all_except": "librarian",
@@ -21,12 +22,6 @@ def route_by_intent(state) -> str:
         "query_emotion_songs": "librarian",
         "query_language_songs": "librarian",
         "recommend_random": "librarian",
-
-        # Scout 域
-        "discover": "scout",
-
-        # Curator 域（scout 完成后自动流转）
-        "curator": "curator",
 
         # Organizer 域
         "organize": "organizer",
@@ -40,14 +35,19 @@ def route_by_intent(state) -> str:
         "fix_metadata_issues": "metadata",
         "sync_emotion": "metadata",
 
-        # 直接 respond 的简单指令
+        # scan/stats/emotion 归 librarian
+        "scan": "librarian",
+        "show_language_stats": "librarian",
+        "analyze_emotion": "librarian",
+        "clear_emotion_cache": "librarian",
+        "show_library_stats": "librarian",
+
+        # 直接 respond 的简单指令（纯文本，无业务逻辑）
         "help": "respond",
         "clear": "respond",
         "exit": "respond",
         "cancel": "respond",
-        "show_language_stats": "respond",
-        "analyze_emotion": "respond",
-        "show_library_stats": "respond",
+        "monitor": "respond",
         "list_playlists": "respond",
         "list_models": "respond",
         "switch_model": "respond",
@@ -62,8 +62,6 @@ def route_by_intent(state) -> str:
         "export_library": "respond",
         "import_library": "respond",
         "convert": "respond",
-        "monitor": "respond",
-        "scan": "respond",
     }
 
     return routing_map.get(intent, "respond")

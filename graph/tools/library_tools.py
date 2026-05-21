@@ -17,7 +17,7 @@ from core.music_library_db import get_library_db
 @tool
 def search_music(query: str, top_k: int = 10) -> str:
     """语义搜索本地音乐库。query 是自然语言查询（如'周杰伦的歌'、'90年代摇滚'）。
-    返回匹配的歌曲列表（JSON格式，含歌曲名、艺术家、专辑、相似度）。"""
+    返回匹配的歌曲列表（JSON格式，含歌曲名、艺术家、专辑）。"""
     from agents.librarian import get_librarian
     agent = get_librarian()
     results = agent.query(query, top_k=top_k)
@@ -25,15 +25,19 @@ def search_music(query: str, top_k: int = 10) -> str:
     for r in results:
         song = r.get("song")
         if song:
-            formatted.append({
+            entry = {
                 "title": song.title,
                 "artist": song.artist,
                 "album": song.album,
                 "genre": song.genre,
                 "year": song.year,
                 "file_path": song.file_path,
-                "similarity": r.get("similarity", 0),
-            })
+            }
+            # 只在非情绪查询时附带相似度（情绪查询是精确匹配，无相似度概念）
+            intent = r.get("intent", {})
+            if not intent.get("mood"):
+                entry["similarity"] = round(r.get("similarity", 0), 2)
+            formatted.append(entry)
     return json.dumps(formatted, ensure_ascii=False, indent=2)
 
 

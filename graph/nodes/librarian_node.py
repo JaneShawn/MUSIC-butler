@@ -182,17 +182,15 @@ def _handle_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]
     analyzer = SimpleEmotionAnalyzer(kimi_client=kimi)
 
     songs = list(agent.songs.values())
-    has_cache = any(
-        analyzer._get_file_hash(s.file_path) in analyzer._cache
-        for s in songs
-        if s.file_path
-    )
     force = state.get("task_params", {}).get("force", False)
-    if not has_cache or force:
-        songs_to_analyze = [
-            {"file_path": s.file_path, "title": s.title, "artist": s.artist, "lyrics": None}
-            for s in songs
-        ]
+
+    # 只分析缓存里没有的歌（新歌）；force=True 时重新分析全部
+    songs_to_analyze = [
+        {"file_path": s.file_path, "title": s.title, "artist": s.artist, "lyrics": None}
+        for s in songs
+        if s.file_path and (force or analyzer._get_file_hash(s.file_path) not in analyzer._cache)
+    ]
+    if songs_to_analyze:
         analyzer.batch_analyze(songs_to_analyze, verbose=False)
 
     emotion_stats = {}

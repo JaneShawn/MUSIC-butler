@@ -185,6 +185,7 @@ def _handle_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]
     has_cache = any(
         analyzer._get_file_hash(s.file_path) in analyzer._cache
         for s in songs
+        if s.file_path
     )
     force = state.get("task_params", {}).get("force", False)
     if not has_cache or force:

@@ -150,8 +150,12 @@ class SimpleEmotionAnalyzer:
     
     def _get_file_hash(self, file_path: str) -> str:
         import hashlib
-        mtime = os.path.getmtime(file_path)
-        return hashlib.md5(f"{file_path}:{mtime}".encode()).hexdigest()[:16]
+        try:
+            mtime = os.path.getmtime(file_path)
+            key = f"{file_path}:{mtime}"
+        except OSError:
+            key = file_path
+        return hashlib.md5(key.encode()).hexdigest()[:16]
     
     def _analyze_audio_simple(self, file_path: str) -> Dict:
         """使用 pydub 获取简单音频特征"""

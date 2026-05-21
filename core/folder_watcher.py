@@ -97,7 +97,10 @@ class FolderWatcher:
             logger.info(f"检测到 {len(added)} 个新文件，触发扫描")
             try:
                 result = self._librarian.run("scan")
-                logger.info(f"扫描完成: 新增 {result.get('new_songs', 0)} 首")
+                new_count = result.get('new_songs', 0)
+                logger.info(f"扫描完成: 新增 {new_count} 首")
+                if new_count > 0:
+                    self._analyze_new_songs_async(added)
             except Exception as e:
                 logger.error(f"扫描失败: {e}")
 
@@ -113,6 +116,40 @@ class FolderWatcher:
                 if song_id in self._librarian.songs:
                     del self._librarian.songs[song_id]
             logger.info(f"已清理 {len(deleted)} 条残留索引")
+
+    def _analyze_new_songs_async(self, file_paths: list):
+        """后台线程对新入库的歌曲分析情绪，不阻塞对话。"""
+        def _run():
+            try:
+                from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+                from core.kimi_client import KimiClient
+                kimi = None
+                try:
+                    from graph.utils import load_config
+                    kimi = KimiClient(config=load_config())
+                except Exception:
+                    pass
+                analyzer = SimpleEmotionAnalyzer(kimi_client=kimi)
+                songs_to_analyze = []
+                for fp in file_paths:
+                    song_id = self._librarian._file_to_id(fp)
+                    song = self._librarian.songs.get(song_id)
+                    if song and analyzer._get_file_hash(fp) not in analyzer._cache:
+                        songs_to_analyze.append({
+                            "file_path": fp,
+                            "title": song.title,
+                            "artist": song.artist,
+                            "lyrics": None,
+                        })
+                if songs_to_analyze:
+                    logger.info(f"[情绪分析] 后台分析 {len(songs_to_analyze)} 首新歌")
+                    analyzer.batch_analyze(songs_to_analyze, verbose=False)
+                    logger.info("[情绪分析] 完成")
+            except Exception as e:
+                logger.error(f"[情绪分析] 后台分析失败: {e}")
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
 
     def start(self):
         if self._running:

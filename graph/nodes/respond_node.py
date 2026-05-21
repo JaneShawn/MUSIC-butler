@@ -56,18 +56,7 @@ def respond_node(state: MusicAgentState) -> Dict[str, Any]:
                 "输入「模型列表」查看所有可用模型。",
                 "agent_trace": trace}
 
-    # 纠错类
-    if intent in ("correct_language", "correct_emotion"):
-        target = "语言" if intent == "correct_language" else "情绪"
-        return {"final_response": f"✏️ 纠正{target}：说「标记 歌手 - 歌名 为 {target}标签」。\n"
-                f"例如：「标记 周杰伦 - 晴天 为 国语」或「标记 周杰伦 - 晴天 为 怀旧」。",
-                "agent_trace": trace}
-
     # 元数据类
-    if intent == "update_song_info":
-        return {"final_response": "✏️ 更新歌曲信息：说「更新 歌名 的 字段 为 值」。\n"
-                "例如：「更新 晴天 的 语言 为 国语」或「更新 晴天 的 情绪 为 怀旧」。",
-                "agent_trace": trace}
     if intent in ("detect_single_language", "analyze_single_emotion"):
         target = "语言" if intent == "detect_single_language" else "情绪"
         return {"final_response": f"🔍 单曲{target}检测：输入「检测 歌手 - 歌名 的{target}」。\n"

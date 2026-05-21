@@ -34,6 +34,9 @@ def route_by_intent(state) -> str:
         "diagnose": "metadata",
         "fix_metadata_issues": "metadata",
         "sync_emotion": "metadata",
+        "correct_emotion": "metadata",
+        "correct_language": "metadata",
+        "update_song_info": "metadata",
 
         # scan/stats/emotion 归 librarian
         "scan": "librarian",

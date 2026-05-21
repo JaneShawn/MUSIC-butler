@@ -25,6 +25,10 @@ def metadata_node(state: MusicAgentState) -> Dict[str, Any]:
     if intent == "fix_single":
         return _run_fix_single(params, trace)
 
+    # 用户手动修改情绪/语言
+    if intent in ("correct_emotion", "correct_language", "update_song_info"):
+        return _run_update_tag(intent, params, state, trace)
+
     # 批量修复（需要确认）
     if intent in ("fix_metadata", "fix_metadata_issues"):
         if state.get("requires_confirmation") and state.get("pending_action"):
@@ -184,3 +188,97 @@ def _run_fix_single(params: dict, trace: list) -> Dict[str, Any]:
 
     return {"final_response": f"未能在线找到 '{file_hint}' 的元数据。",
             "agent_trace": trace + ["metadata: fix_single failed"]}
+
+
+# 情绪标签映射（中文→英文）
+_EMOTION_MAP = {
+    '快乐': 'happy', '高兴': 'happy', '开心': 'happy', '欢快': 'happy',
+    '悲伤': 'sad', '难过': 'sad', '伤感': 'sad', '忧郁': 'sad',
+    '激情': 'energetic', '激烈': 'energetic', '热血': 'energetic',
+    '平静': 'calm', '安静': 'calm', '舒缓': 'calm', '放松': 'calm',
+    '浪漫': 'romantic', '温柔': 'romantic',
+    '怀旧': 'nostalgic', '回忆': 'nostalgic',
+    '愤怒': 'angry', '愤慨': 'angry',
+    '专注': 'focus',
+    '派对': 'party',
+    # 直接传英文也支持
+    'happy': 'happy', 'sad': 'sad', 'energetic': 'energetic',
+    'calm': 'calm', 'romantic': 'romantic', 'nostalgic': 'nostalgic',
+    'angry': 'angry', 'focus': 'focus', 'party': 'party',
+}
+
+_EMOTION_DISPLAY = {
+    'happy': '快乐', 'sad': '悲伤', 'energetic': '激情',
+    'calm': '平静', 'romantic': '浪漫', 'nostalgic': '怀旧',
+    'angry': '愤怒', 'focus': '专注', 'party': '派对',
+}
+
+
+def _run_update_tag(intent: str, params: dict, state: MusicAgentState, trace: list) -> Dict[str, Any]:
+    """用户手动修改单首歌的情绪或语言标签。"""
+    from core.music_library_db import get_library_db
+    from agents.librarian import get_librarian
+    from graph.utils import msg_content
+
+    messages = state.get("messages", [])
+    user_input = msg_content(messages[-1]) if messages else ""
+
+    # 从 task_params 或原始输入里提取字段
+    song_hint = params.get("song_hint") or params.get("input", "")
+    field = params.get("field", "")
+    value = params.get("value", "")
+
+    # 如果 field/value 为空，从 user_input 提取（correct_emotion / correct_language 只传了 input）
+    if not field:
+        if intent == "correct_emotion":
+            field = "emotion"
+        elif intent == "correct_language":
+            field = "language"
+
+    if not song_hint:
+        song_hint = user_input
+
+    if not value:
+        value = user_input
+
+    # 搜索匹配歌曲
+    agent = get_librarian()
+    matched = None
+    for song in agent.songs.values():
+        combined = f"{song.artist} {song.title}".lower()
+        if song_hint.lower() in combined or any(
+            w in combined for w in song_hint.lower().split()
+        ):
+            matched = song
+            break
+
+    if not matched:
+        # 降级：向量搜索
+        results = agent.query(song_hint, top_k=1)
+        if results:
+            matched = results[0].get("song")
+
+    if not matched:
+        return {"final_response": f"❌ 未找到匹配「{song_hint}」的歌曲，请检查歌名是否正确。",
+                "agent_trace": trace + ["metadata: update_tag not found"]}
+
+    lib_db = get_library_db()
+
+    if field == "emotion":
+        emotion_en = _EMOTION_MAP.get(value.strip())
+        if not emotion_en:
+            valid = "、".join(_EMOTION_DISPLAY.values())
+            return {"final_response": f"❌ 不支持的情绪标签「{value}」。\n支持：{valid}",
+                    "agent_trace": trace + ["metadata: update_tag invalid emotion"]}
+        lib_db.update_emotion(matched.artist, matched.title, emotion_en, "manual")
+        display = _EMOTION_DISPLAY.get(emotion_en, emotion_en)
+        return {"final_response": f"✅ 已将「{matched.artist} - {matched.title}」的情绪标记为【{display}】",
+                "agent_trace": trace + ["metadata: update_emotion done"]}
+
+    if field == "language":
+        lib_db.update_language(matched.artist, matched.title, value.strip(), "manual")
+        return {"final_response": f"✅ 已将「{matched.artist} - {matched.title}」的语言标记为【{value.strip()}】",
+                "agent_trace": trace + ["metadata: update_language done"]}
+
+    return {"final_response": f"❌ 不支持修改字段「{field}」，目前只支持修改情绪和语言。",
+            "agent_trace": trace + ["metadata: update_tag unknown field"]}

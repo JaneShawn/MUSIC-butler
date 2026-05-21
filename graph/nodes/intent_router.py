@@ -352,6 +352,30 @@ def _handle_query_context(
             "agent_trace": ["intent_router(context): play all results"],
         }
 
+    # "播放这N首" / "播放全部" / "播放所有" / "全部播放" → 播放全部结果
+    if re.match(r'^播放?(这|全部|所有|这些|这几|这[一二三四五六七八九十\d]+首?)?$', u) or \
+       u in ("播放这些", "播放全部", "播放所有", "全都播放", "全播了", "都播", "这些都播"):
+        return {
+            "intent": "play_all_results",
+            "task_params": {"items": query_results},
+            "agent_trace": ["intent_router(context): play all results"],
+        }
+
+    # "播放这五首" / "播这三首" 等 — 中文数字+首
+    m = re.match(r'^播放?这?([一二三四五六七八九十百\d]+)首$', u)
+    if m:
+        cn_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+                  '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+        raw = m.group(1)
+        count = cn_map.get(raw) or (int(raw) if raw.isdigit() else None)
+        if count:
+            items = query_results[:min(count, n)]
+            return {
+                "intent": "play_all_results",
+                "task_params": {"items": items},
+                "agent_trace": ["intent_router(context): play N results"],
+            }
+
     # "随机来一首" 等 → 随机选一首播放
     if u in ("随机来一首", "随机一首", "随机播放", "随机来一个", "随机播", "来一首随机的"):
         return {

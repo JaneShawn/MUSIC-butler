@@ -77,11 +77,41 @@ class MusicAgentChat:
             print(f"  [监控] 启动失败: {e}")
 
     # ── 对话接口 ──
+    def _handle_monitor_command(self, user_input: str):
+        """处理监控指令，返回回复字符串；不是监控指令则返回 None。"""
+        start_words = ["开启监控", "启动监控", "打开监控", "开始监控"]
+        stop_words = ["关闭监控", "停止监控", "关掉监控"]
+        status_words = {"监控状态", "监控"}
+
+        if any(w in user_input for w in stop_words):
+            if hasattr(self, '_watcher') and self._watcher.is_running:
+                self._watcher.stop()
+                return "🔍 文件监控已停止。"
+            return "🔍 文件监控未在运行。"
+
+        if any(w in user_input for w in start_words):
+            if hasattr(self, '_watcher') and self._watcher.is_running:
+                return "🔍 文件监控已在运行中。"
+            self._start_watcher()
+            return "🔍 文件监控已启动。"
+
+        if user_input.strip() in status_words:
+            running = hasattr(self, '_watcher') and self._watcher.is_running
+            if running:
+                return "🔍 文件监控运行中。输入「关闭监控」停止。"
+            return "🔍 文件监控未启动。输入「开启监控」自动监听音乐库目录。"
+
+        return None
+
     def chat(self, user_input: str) -> str:
         """单轮对话：传入用户输入，返回助手回复。
 
         使用 LangGraph MemorySaver 自动维护多轮对话状态（替代 chat_session.json）。
         """
+        monitor_result = self._handle_monitor_command(user_input)
+        if monitor_result is not None:
+            return monitor_result
+
         config = {"configurable": {"thread_id": self.thread_id}}
 
         result = self.graph.invoke(
@@ -118,8 +148,7 @@ class MusicAgentChat:
         print("\n" + "=" * 55)
         print("Music Agent Chat - LangGraph Multi-Agent")
         print("=" * 55 + "\n")
-        print("Hello! I'm your music assistant. How can I help you today?")
-        print("Type 'help' to see all features\n")
+        print("Hello Jane! 我是你的音乐助手，有什么能帮助你的？")
 
         while True:
             try:
@@ -130,7 +159,7 @@ class MusicAgentChat:
                 if user_input.lower() in ["exit", "quit", "q", "bye", "886", "退出", "再见"]:
                     if hasattr(self, '_watcher') and self._watcher.is_running:
                         self._watcher.stop()
-                    print("\nGoodbye! Enjoy the music!")
+                    print("\n下次见！")
                     break
 
                 response = self.chat(user_input)

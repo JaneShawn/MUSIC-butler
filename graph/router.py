@@ -47,7 +47,6 @@ def route_by_intent(state) -> str:
         "clear": "respond",
         "exit": "respond",
         "cancel": "respond",
-        "monitor": "respond",
         "list_playlists": "respond",
         "list_models": "respond",
         "switch_model": "respond",

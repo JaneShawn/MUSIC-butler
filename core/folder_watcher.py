@@ -143,7 +143,15 @@ class FolderWatcher:
                         })
                 if songs_to_analyze:
                     logger.info(f"[情绪分析] 后台分析 {len(songs_to_analyze)} 首新歌")
-                    analyzer.batch_analyze(songs_to_analyze, verbose=False)
+                    results = analyzer.batch_analyze(songs_to_analyze, verbose=False)
+                    # 同步写入 SQLite
+                    from core.music_library_db import get_library_db as _get_db
+                    lib_db = _get_db()
+                    for fp, r in results.items():
+                        song_id = self._librarian._file_to_id(fp)
+                        song = self._librarian.songs.get(song_id)
+                        if song:
+                            lib_db.update_emotion(song.artist, song.title, r.emotion, str(round(r.confidence, 2)))
                     logger.info("[情绪分析] 完成")
             except Exception as e:
                 logger.error(f"[情绪分析] 后台分析失败: {e}")

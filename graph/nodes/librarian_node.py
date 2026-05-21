@@ -169,11 +169,16 @@ def _handle_language_stats(trace: list) -> Dict[str, Any]:
 
 def _handle_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]:
     from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+    from core.music_library_db import get_library_db
     from agents.librarian import get_librarian
     from core.kimi_client import KimiClient
     from graph.utils import load_config
 
     agent = get_librarian()
+    lib_db = get_library_db()
+    force = state.get("task_params", {}).get("force", False)
+
+    # 以 SQLite emotion 字段为准，找出没有情绪记录的歌
     kimi = None
     try:
         kimi = KimiClient(config=load_config())
@@ -182,23 +187,34 @@ def _handle_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]
     analyzer = SimpleEmotionAnalyzer(kimi_client=kimi)
 
     songs = list(agent.songs.values())
-    force = state.get("task_params", {}).get("force", False)
+    songs_to_analyze = []
+    for s in songs:
+        if not s.file_path:
+            continue
+        record = lib_db.get_record(s.artist, s.title)
+        if force or not (record and record.emotion):
+            songs_to_analyze.append({
+                "file_path": s.file_path,
+                "title": s.title,
+                "artist": s.artist,
+                "lyrics": None,
+            })
 
-    # 只分析缓存里没有的歌（新歌）；force=True 时重新分析全部
-    songs_to_analyze = [
-        {"file_path": s.file_path, "title": s.title, "artist": s.artist, "lyrics": None}
-        for s in songs
-        if s.file_path and (force or analyzer._get_file_hash(s.file_path) not in analyzer._cache)
-    ]
     if songs_to_analyze:
-        analyzer.batch_analyze(songs_to_analyze, verbose=False)
+        results = analyzer.batch_analyze(songs_to_analyze, verbose=False)
+        # 同步写入 SQLite
+        for s in songs:
+            fp = s.file_path
+            if fp in results:
+                r = results[fp]
+                lib_db.update_emotion(s.artist, s.title, r.emotion, str(round(r.confidence, 2)))
 
+    # 从 SQLite 统计
     emotion_stats = {}
-    for song in songs:
-        cache_key = analyzer._get_file_hash(song.file_path)
-        if cache_key in analyzer._cache:
-            emotion = analyzer._cache[cache_key].get("emotion", "unknown")
-            emotion_stats[emotion] = emotion_stats.get(emotion, 0) + 1
+    for s in songs:
+        record = lib_db.get_record(s.artist, s.title)
+        if record and record.emotion:
+            emotion_stats[record.emotion] = emotion_stats.get(record.emotion, 0) + 1
 
     if not emotion_stats:
         return {"final_response": "暂无情绪分析结果。", "agent_trace": trace + ["librarian: emotion_stats empty"]}
@@ -216,6 +232,8 @@ def _handle_emotion_stats(state: MusicAgentState, trace: list) -> Dict[str, Any]
         lines.append(f"  {name:6} | {bar:30} | {count}首")
     lines.append("=" * 40)
     lines.append(f"总计: {total} 首")
+    if songs_to_analyze:
+        lines.append(f"（本次新分析 {len(songs_to_analyze)} 首）")
     return {"final_response": "\n".join(lines), "agent_trace": trace + ["librarian: emotion_stats done"]}
 
 

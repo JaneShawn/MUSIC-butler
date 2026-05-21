@@ -34,6 +34,10 @@ LIBRARIAN_SYSTEM_PROMPT = """你是音乐图书管理员，负责管理用户的
 - "播放开心的歌" / "播放安静的歌曲" → play_by_emotion(emotion="happy"/"calm")
 - "播放" + 具体歌名 → play_song
 
+列出歌曲时，只显示序号、歌手和歌名，格式：
+  1. 歌手 - 歌名
+不要显示专辑、流派、年份、文件路径等其他字段。
+
 以中文回复用户，保持简洁友好。"""
 
 _agent = None
@@ -42,9 +46,7 @@ _agent = None
 def _get_agent():
     global _agent
     if _agent is None:
-        from graph.utils import load_config
-        model = load_config().get("llm", {}).get("model", "moonshot-v1-8k")
-        llm = KimiChatModel(model=model, temperature=0.3, max_tokens=800)
+        llm = KimiChatModel(model="moonshot-v1-32k", temperature=0.3, max_tokens=800)
         _agent = create_react_agent(
             model=llm,
             tools=LIBRARIAN_TOOLS,
@@ -117,7 +119,19 @@ def librarian_node(state: MusicAgentState) -> Dict[str, Any]:
     assistant_reply = ""
     for msg in reversed(final_msgs):
         if hasattr(msg, "content") and msg.content:
-            assistant_reply = msg.content
+            content = msg.content
+            # 如果 Kimi 返回 400 导致 react agent 把原始 JSON 当回复，自己格式化
+            if isinstance(content, str) and content.strip().startswith("["):
+                try:
+                    data = json.loads(content)
+                    if isinstance(data, list) and data and isinstance(data[0], dict) and "title" in data[0]:
+                        lines = [f"{i+1}. {d.get('artist','')} - {d.get('title','')}"
+                                 for i, d in enumerate(data)]
+                        assistant_reply = "\n".join(lines)
+                        break
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            assistant_reply = content
             break
 
     if not assistant_reply:
@@ -273,20 +287,40 @@ def _handle_play_items(intent: str, params: dict, trace: list) -> Dict[str, Any]
     """直接播放 task_params 里指定的歌曲列表，不走 react agent。"""
     from graph.tools.library_tools import _create_m3u8_playlist, _play_with_foobar2000
     from graph.utils import load_config
-    from agents.librarian import Song
+    from agents.librarian import get_librarian, Song
 
     items = params.get("items") or params.get("songs", [])
     if not items:
         return {"final_response": "没有可播放的歌曲。", "agent_trace": trace + ["librarian: play_items empty"]}
 
-    # items 可能是 dict（来自 query_results）或直接是 Song 对象
+    # items 可能是：
+    #   1. {'song': Song对象, ...}  — 来自 agents/librarian.py query()
+    #   2. {'title': str, 'artist': str, 'file_path': str}  — 来自 search_music 工具 JSON
+    #   3. Song 对象
+    librarian = None
     songs = []
     for item in items:
         if isinstance(item, dict):
             song = item.get("song")
             if song:
                 songs.append(song)
-        else:
+            elif item.get("file_path"):
+                # 从 librarian.songs 里按 file_path 找 Song 对象
+                if librarian is None:
+                    librarian = get_librarian()
+                fp = item["file_path"]
+                song_id = librarian._file_to_id(fp)
+                found = librarian.songs.get(song_id)
+                if found:
+                    songs.append(found)
+                else:
+                    # 构造临时 Song 对象
+                    songs.append(Song(
+                        title=item.get("title", ""),
+                        artist=item.get("artist", ""),
+                        file_path=fp,
+                    ))
+        elif hasattr(item, "file_path"):
             songs.append(item)
 
     if not songs:

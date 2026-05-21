@@ -413,6 +413,15 @@ def _handle_query_context(
     return None
 
 
+def _item_artist_title(item: Dict[str, Any]):
+    """从 query_results 的 item 中提取 (artist, title)。
+    item 可能是 {'song': Song对象} 或 {'artist': str, 'title': str, ...} 两种格式。"""
+    song = item.get("song")
+    if song:
+        return song.artist, song.title
+    return item.get("artist", ""), item.get("title", "")
+
+
 def _filter_query_results(
     user_input: str, query_results: List[Dict[str, Any]]
 ) -> Optional[Dict[str, Any]]:
@@ -420,12 +429,11 @@ def _filter_query_results(
     u = user_input.strip()
 
     # 必须含有「这些/里面/其中/当中/里的/结果」等上下文词，避免误拦截普通播放指令
-    context_words = ["这些", "里面", "其中", "当中", "里的", "结果里", "里头", "这几首", "这几个"]
+    context_words = ["这些", "里面", "其中", "当中", "里的", "结果里", "里头", "这几首", "这几个", "这里面"]
     if not any(w in u for w in context_words):
         return None
 
     from core.music_library_db import get_library_db
-    from core.language_constants import LANGUAGE_ALIAS
 
     lib_db = get_library_db()
 
@@ -446,11 +454,14 @@ def _filter_query_results(
     if detected_lang:
         filtered = []
         for item in query_results:
-            song = item.get("song")
-            if not song:
+            artist, title = _item_artist_title(item)
+            if not artist and not title:
                 continue
-            record = lib_db.get_record(song.artist, song.title)
+            record = lib_db.get_record(artist, title)
             lang = record.language if record else None
+            if not lang:
+                from core.language_detector import detector
+                lang, _, _ = detector.detect(title, artist, item.get("file_path", ""))
             if lang == detected_lang:
                 filtered.append(item)
         if filtered:
@@ -461,7 +472,7 @@ def _filter_query_results(
             }
         return {
             "intent": "respond",
-            "task_params": {"query": f"结果里没有{detected_lang}歌曲。"},
+            "task_params": {},
             "final_response": f"这些歌曲里没有{detected_lang}的歌。",
             "agent_trace": ["intent_router(context): filter by language, empty"],
         }
@@ -489,10 +500,10 @@ def _filter_query_results(
     if detected_emotion:
         filtered = []
         for item in query_results:
-            song = item.get("song")
-            if not song:
+            artist, title = _item_artist_title(item)
+            if not artist and not title:
                 continue
-            record = lib_db.get_record(song.artist, song.title)
+            record = lib_db.get_record(artist, title)
             if record and record.emotion == detected_emotion:
                 filtered.append(item)
         if filtered:
@@ -509,17 +520,16 @@ def _filter_query_results(
         }
 
     # ── 歌手筛选 ──
-    artist_match = re.search(r'(?:播放?)?(?:这些|里面|其中|当中|里的|结果里).*?([^\s的中英日韩]{2,}?)(?:的歌?|唱的)?$', u)
+    artist_match = re.search(r'(?:播放?)?(?:这些|里面|其中|当中|里的|结果里|这里面).*?([^\s的中英日韩]{2,}?)(?:的歌?|唱的)?$', u)
     if artist_match:
         artist_hint = artist_match.group(1).strip()
-        # 排除语气词/功能词误匹配
         skip_words = {"英文", "中文", "日文", "韩文", "国语", "粤语", "英语", "日语", "韩语",
                       "悲伤", "快乐", "开心", "浪漫", "怀旧", "激情", "平静", "愤怒"}
         if artist_hint and artist_hint not in skip_words and len(artist_hint) >= 2:
             filtered = []
             for item in query_results:
-                song = item.get("song")
-                if song and artist_hint.lower() in song.artist.lower():
+                artist, _ = _item_artist_title(item)
+                if artist and artist_hint.lower() in artist.lower():
                     filtered.append(item)
             if filtered:
                 return {

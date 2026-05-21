@@ -25,19 +25,11 @@ def search_music(query: str, top_k: int = 10) -> str:
     for r in results:
         song = r.get("song")
         if song:
-            entry = {
+            formatted.append({
                 "title": song.title,
                 "artist": song.artist,
-                "album": song.album,
-                "genre": song.genre,
-                "year": song.year,
                 "file_path": song.file_path,
-            }
-            # 只在非情绪查询时附带相似度（情绪查询是精确匹配，无相似度概念）
-            intent = r.get("intent", {})
-            if not intent.get("mood"):
-                entry["similarity"] = round(r.get("similarity", 0), 2)
-            formatted.append(entry)
+            })
     return json.dumps(formatted, ensure_ascii=False, indent=2)
 
 
@@ -65,10 +57,6 @@ def get_song_info(title_hint: str) -> str:
             formatted.append({
                 "title": song.title,
                 "artist": song.artist,
-                "album": song.album,
-                "genre": song.genre,
-                "year": song.year,
-                "duration": song.duration,
                 "file_path": song.file_path,
             })
     return json.dumps(formatted, ensure_ascii=False, indent=2)

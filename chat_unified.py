@@ -36,10 +36,6 @@ class MusicAgentChat:
         self.graph = music_graph
         self.thread_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        # 上下文兼容（旧代码引用 self.context 时不报错）
-        from chat.context import ContextManager
-        self.context = ContextManager(session_file=current_dir / "chat_session.json")
-
         # 自动启动文件监控
         self._start_watcher()
 

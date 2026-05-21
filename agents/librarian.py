@@ -1152,7 +1152,22 @@ class LibrarianAgent(BaseAgent):
                 text_parts.append(language)
             if s.genre:
                 text_parts.append(s.genre)
-            
+            try:
+                from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+                analyzer = SimpleEmotionAnalyzer()
+                cache_key = analyzer._get_file_hash(s.file_path)
+                if cache_key in analyzer._cache:
+                    emotion_en = analyzer._cache[cache_key].get("emotion", "")
+                    emotion_names = {
+                        'happy': '快乐', 'sad': '悲伤', 'energetic': '激情',
+                        'calm': '平静', 'romantic': '浪漫', 'nostalgic': '怀旧',
+                        'angry': '愤怒', 'focus': '专注', 'party': '派对',
+                    }
+                    if emotion_en and emotion_en in emotion_names:
+                        text_parts.append(emotion_names[emotion_en])
+            except Exception:
+                pass
+
             texts.append(" ".join(filter(None, text_parts)))
             ids.append(s.id)
             metadatas.append({

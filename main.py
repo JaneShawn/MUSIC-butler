@@ -36,7 +36,7 @@ if _env_path.exists():
 else:
     load_dotenv()
 
-from agents import ScoutAgent, CuratorAgent, OrganizerAgent, OrganizeStrategy
+from agents import OrganizerAgent, OrganizeStrategy
 from agents.librarian import get_librarian
 
 
@@ -71,74 +71,6 @@ def cmd_query(args):
         print(f"   专辑: {song.album}")
         print(f"   匹配度: {item['similarity']:.2%}")
         print()
-
-
-def cmd_discover(args):
-    """发现新音乐"""
-    from graph.utils import load_config
-
-    config = load_config()
-    librarian = get_librarian(config)
-    scout = ScoutAgent(config)
-    curator = CuratorAgent(config, librarian)
-
-    # 发现候选
-    print(f"🔍 正在从 {args.source} 发现新音乐...")
-    candidates = scout.run(args.source)
-
-    if not candidates:
-        print("❌ 没有发现新音乐")
-        return
-
-    print(f"\n📬 发现 {len(candidates)} 首候选歌曲\n")
-
-    # 评估推荐
-    print("🤖 策展人正在评估...")
-    recommendations = curator.run("evaluate", candidates=candidates)
-
-    print(f"✅ 生成 {len(recommendations)} 条推荐:\n")
-
-    for rec in recommendations:
-        badge = "⭐" if rec.action == "highly_recommend" else "👍"
-        print(f"{badge} {rec.candidate.artist} - {rec.candidate.title}")
-        print(f"   匹配度: {rec.similarity_score:.2%}")
-        print(f"   理由: {rec.match_reason}")
-        print()
-
-
-def cmd_report(args):
-    """生成周报"""
-    from graph.utils import load_config
-
-    config = load_config()
-    librarian = get_librarian(config)
-    scout = ScoutAgent(config)
-    curator = CuratorAgent(config, librarian)
-
-    # 获取本周发现
-    candidates = scout.run("all")
-    recommendations = curator.run("evaluate", candidates=candidates) if candidates else []
-
-    # 生成报告
-    report = curator.run("report", recommendations=recommendations)
-
-    if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-    else:
-        print(f"\n📊 {report['title']}\n")
-
-        summary = report['summary']
-        print(f"本周发现: {summary['total_discovered']} 首")
-        print(f"强烈推荐: {summary['highly_recommended']} 首")
-        print(f"涉及流派: {', '.join(summary['genres'])}")
-        print()
-
-        if report['recommendations']:
-            print("本周推荐:\n")
-            for rec in report['recommendations']:
-                print(f"🎵 {rec['artist']} - {rec['title']}")
-                print(f"   {rec['reason']}")
-                print()
 
 
 def cmd_web(args):
@@ -240,8 +172,6 @@ def main():
 示例:
   python main.py scan                    # 扫描音乐库
   python main.py query "周杰伦的歌"       # 自然语言查询
-  python main.py discover --source rss   # 从RSS发现新音乐
-  python main.py report                  # 生成周报
   python main.py web                     # 启动Web界面
   python main.py organize --analyze      # 分析当前目录结构
   python main.py organize --strategy artist/album --dry-run  # 预览整理效果
@@ -258,19 +188,6 @@ def main():
     query_parser = subparsers.add_parser("query", help="查询歌曲")
     query_parser.add_argument("text", help="查询文本")
     query_parser.add_argument("--top-k", type=int, default=10, help="返回结果数")
-    
-    # discover 命令
-    discover_parser = subparsers.add_parser("discover", help="发现新音乐")
-    discover_parser.add_argument(
-        "--source", 
-        choices=["all", "rss", "reddit", "api"],
-        default="all",
-        help="数据源"
-    )
-    
-    # report 命令
-    report_parser = subparsers.add_parser("report", help="生成周报")
-    report_parser.add_argument("--json", action="store_true", help="输出JSON格式")
     
     # web 命令
     web_parser = subparsers.add_parser("web", help="启动Web界面")
@@ -312,8 +229,6 @@ def main():
     commands = {
         "scan": cmd_scan,
         "query": cmd_query,
-        "discover": cmd_discover,
-        "report": cmd_report,
         "web": cmd_web,
         "organize": cmd_organize,
     }

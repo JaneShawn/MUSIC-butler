@@ -10,7 +10,7 @@ import streamlit as st
 import yaml
 from datetime import datetime
 
-from agents import LibrarianAgent, ScoutAgent, CuratorAgent, OrganizerAgent
+from agents import OrganizerAgent
 
 
 st.set_page_config(
@@ -31,11 +31,10 @@ config = load_config()
 
 @st.cache_resource
 def init_agents(_config):
-    librarian = LibrarianAgent(_config)
-    scout = ScoutAgent(_config)
-    curator = CuratorAgent(_config, librarian)
+    from agents.librarian import get_librarian
+    librarian = get_librarian(_config)
     organizer = OrganizerAgent(_config, librarian)
-    return librarian, scout, curator, organizer
+    return librarian, organizer
 
 
 @st.cache_resource
@@ -65,7 +64,7 @@ def init_metadata_scheduler(_librarian):
     return MetadataScheduler(librarian=_librarian)
 
 
-librarian, scout, curator, organizer = init_agents(config)
+librarian, organizer = init_agents(config)
 folder_watcher = init_folder_watcher(config)
 folder_watcher.set_librarian(librarian)
 playlist_engine = init_playlist_engine(librarian)
@@ -78,7 +77,7 @@ metadata_scheduler = init_metadata_scheduler(librarian)
 st.sidebar.title("🎵 Music Agent")
 page = st.sidebar.radio(
     "导航",
-    ["首页", "音乐库", "发现", "周报", "整理", "智能歌单", "元数据诊断"]
+    ["首页", "音乐库", "整理", "智能歌单", "元数据诊断"]
 )
 
 # ============================================================
@@ -129,17 +128,6 @@ if page == "首页":
                 result = librarian.run("scan")
                 st.success(f"扫描完成！发现 {result['new_songs']} 首新歌")
                 st.info(f"总计：{result['total_indexed']} 首")
-    with col2:
-        if st.button("🔍 发现新音乐", use_container_width=True):
-            with st.spinner("正在搜索..."):
-                candidates = scout.run("all")
-                if candidates:
-                    recommendations = curator.run("evaluate", candidates=candidates)
-                    st.success(f"发现 {len(recommendations)} 首推荐")
-                    st.session_state["latest_recommendations"] = recommendations
-                else:
-                    st.warning("暂时没有发现新音乐")
-
 # ============================================================
 # 音乐库页面
 # ============================================================
@@ -173,60 +161,6 @@ elif page == "音乐库":
         col2.metric("艺术家", stats["artists"])
         col3.metric("专辑", stats["albums"])
         col4.metric("流派", stats["genres"])
-
-# ============================================================
-# 发现页面
-# ============================================================
-elif page == "发现":
-    st.title("🔍 音乐发现")
-
-    source = st.selectbox("数据源", ["all", "rss", "reddit"])
-
-    if st.button("开始搜索", type="primary"):
-        with st.spinner("侦察兵正在工作..."):
-            candidates = scout.run(source)
-            if candidates:
-                recommendations = curator.run("evaluate", candidates=candidates)
-                st.success(f"发现 {len(candidates)} 首候选，{len(recommendations)} 首推荐")
-                for rec in recommendations:
-                    with st.container():
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.write(f"**{rec.candidate.title}** - {rec.candidate.artist}")
-                            st.caption(f"来源: {rec.candidate.source}")
-                            st.write(f"💡 {rec.match_reason}")
-                        with col2:
-                            st.badge(rec.action.replace("_", " ").title())
-                            st.write(f"相似度: {rec.similarity_score:.2f}")
-                        st.divider()
-            else:
-                st.info("没有发现新音乐")
-
-# ============================================================
-# 周报页面
-# ============================================================
-elif page == "周报":
-    st.title("📊 每周音乐报告")
-
-    if "latest_recommendations" in st.session_state:
-        recs = st.session_state["latest_recommendations"]
-        report = curator.run("report", recommendations=recs)
-        st.header(report["title"])
-        summary = report["summary"]
-        col1, col2, col3 = st.columns(3)
-        col1.metric("本周发现", summary["total_discovered"])
-        col2.metric("强烈推荐", summary["highly_recommended"])
-        col3.metric("涉及流派", len(summary["genres"]))
-        st.divider()
-        st.subheader("本周推荐")
-        for rec in report["recommendations"]:
-            with st.expander(f"{rec['artist']} - {rec['title']}"):
-                st.write(f"**流派**: {', '.join(rec['genre'])}")
-                st.write(f"**推荐理由**: {rec['reason']}")
-                st.write(f"**来源**: {rec['source']}")
-                st.write(f"**匹配度**: {rec['score']}")
-    else:
-        st.info("还没有生成报告，先去【发现】页面搜索新音乐吧！")
 
 # ============================================================
 # 整理页面

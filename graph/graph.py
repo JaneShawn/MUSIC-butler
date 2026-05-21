@@ -7,8 +7,6 @@ from graph.state import MusicAgentState
 from graph.nodes import (
     intent_router_node,
     librarian_node,
-    scout_node,
-    curator_node,
     organizer_node,
     metadata_node,
     respond_node,
@@ -24,8 +22,6 @@ def build_graph() -> StateGraph:
     # 注册节点
     workflow.add_node("intent_router", intent_router_node)
     workflow.add_node("librarian", librarian_node)
-    workflow.add_node("scout", scout_node)
-    workflow.add_node("curator", curator_node)
     workflow.add_node("organizer", organizer_node)
     workflow.add_node("metadata", metadata_node)
     workflow.add_node("respond", respond_node)
@@ -39,8 +35,6 @@ def build_graph() -> StateGraph:
         route_by_intent,
         {
             "librarian": "librarian",
-            "scout": "scout",
-            "curator": "curator",
             "organizer": "organizer",
             "metadata": "metadata",
             "respond": "respond",
@@ -49,8 +43,6 @@ def build_graph() -> StateGraph:
 
     # Agent 完成后 → respond 格式化回复
     workflow.add_edge("librarian", "respond")
-    workflow.add_edge("scout", "curator")   # Scout 发现后自动接 Curator 评估
-    workflow.add_edge("curator", "respond")
     workflow.add_edge("organizer", "respond")
     workflow.add_edge("metadata", "respond")
 

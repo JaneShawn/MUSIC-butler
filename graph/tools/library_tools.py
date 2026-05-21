@@ -2,6 +2,7 @@
 """Librarian 工具集 — 包装 core/ 和 agents/librarian.py 的功能"""
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -407,6 +408,78 @@ def play_by_emotion(emotion: str) -> str:
     }, ensure_ascii=False)
 
 
+@tool
+def play_random(count: int = 5, emotion: str = "", language: str = "") -> str:
+    """随机播放指定数量、情绪、语言的歌曲。
+    count=播放数量，emotion=情绪英文名(可选)，language=语言名(可选)。
+    至少指定 emotion 或 language 之一。
+    返回播放结果（JSON格式）。"""
+    from agents.librarian import get_librarian
+
+    agent = get_librarian()
+    if not agent.songs:
+        agent.scan_library()
+
+    songs = list(agent.songs.values())
+    if not songs:
+        return json.dumps({"status": "empty", "message": "音乐库为空"}, ensure_ascii=False)
+
+    # 按情绪筛选
+    if emotion:
+        from core.emotion_analyzer_simple import SimpleEmotionAnalyzer
+        from core.music_library_db import get_library_db
+        analyzer = SimpleEmotionAnalyzer()
+        lib_db = get_library_db()
+        matched = []
+        for s in songs:
+            cache_key = analyzer._get_file_hash(s.file_path)
+            if cache_key in analyzer._cache:
+                if analyzer._cache[cache_key].get("emotion") == emotion:
+                    matched.append(s)
+                    continue
+            record = lib_db.get_record(s.artist, s.title)
+            if record and record.emotion == emotion:
+                matched.append(s)
+        songs = matched
+
+    # 按语言筛选
+    if language:
+        from core.language_detector import detector
+        from core.music_library_db import get_library_db
+        lib_db = get_library_db()
+        matched = []
+        for s in songs:
+            record = lib_db.get_record(s.artist, s.title)
+            lang = record.language if (record and record.language) else None
+            if not lang:
+                lang, _, _ = detector.detect(s.title, s.artist, s.file_path)
+            if lang == language:
+                matched.append(s)
+        songs = matched
+
+    if not songs:
+        cond = f"{emotion}+{language}" if emotion and language else (emotion or language)
+        return json.dumps({"status": "not_found", "message": f"没有同时满足 {cond} 的歌曲"}, ensure_ascii=False)
+
+    count = min(count, len(songs))
+    picked = random.sample(songs, count)
+
+    from graph.utils import load_config
+    config = load_config()
+    playlist_name = f"随机{count}首"
+    playlist_path = _create_m3u8_playlist(picked, playlist_name, config)
+    foobar_result = _play_with_foobar2000(str(playlist_path))
+
+    song_list = [f"{s.artist} - {s.title}" for s in picked]
+    return json.dumps({
+        "status": "playing" if foobar_result else "playlist_only",
+        "total": count,
+        "songs": song_list,
+        "playlist": str(playlist_path),
+        "message": f"🎵 随机播放 {count} 首歌曲\n" + "\n".join(f"  {i+1}. {t}" for i, t in enumerate(song_list)),
+    }, ensure_ascii=False, indent=2)
+
+
 LIBRARIAN_TOOLS = [search_music, scan_library, get_song_info, get_library_stats,
                    play_song, play_all_songs, play_by_artist,
-                   play_by_language, play_by_emotion]
+                   play_by_language, play_by_emotion, play_random]

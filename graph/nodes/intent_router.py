@@ -22,6 +22,7 @@ _COMMAND_MAP = {
     "语言检测": "show_language_stats", "语言分布": "show_language_stats",
     "语言统计": "show_language_stats", "有哪些语言": "show_language_stats",
     "情绪检测": "analyze_emotion", "情绪分布": "analyze_emotion",
+    "清除情绪缓存": "clear_emotion_cache",
     "监控": "monitor", "monitor": "monitor",
 }
 

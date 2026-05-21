@@ -130,6 +130,22 @@ class ToolRegistry:
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "play_random",
+                    "description": "随机播放指定数量的歌曲，可按情绪和语言筛选。例如：'随机播放五首悲伤的中文歌'、'随机播放十首开心的歌'",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "count": {"type": "integer", "description": "播放数量"},
+                            "emotion": {"type": "string", "description": "情绪英文名，如 happy/sad/calm/energetic/romantic/nostalgic"},
+                            "language": {"type": "string", "description": "语言名，如国语/英语/粤语/日语/韩语"},
+                        },
+                        "required": ["count"],
+                    },
+                },
+            },
             # === 歌单 ===
             {
                 "type": "function",
@@ -193,28 +209,6 @@ class ToolRegistry:
                     "name": "analyze",
                     "description": "分析音乐库整体统计和构成。例如：'分析我的音乐库'、'统计一下'",
                     "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            # === 推荐/发现 ===
-            {
-                "type": "function",
-                "function": {
-                    "name": "recommend_random",
-                    "description": "随机推荐音乐库中的歌曲。例如：'随机推荐'、'推荐几首歌'",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "discover",
-                    "description": "从外部源发现新音乐。例如：'发现新音乐'",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "source": {"type": "string", "enum": ["all", "rss", "reddit"], "description": "数据源"},
-                        },
-                    },
                 },
             },
             # === 元数据修改 ===

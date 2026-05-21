@@ -94,18 +94,25 @@ class SimpleEmotionAnalyzer:
         if verbose and meta_result:
             print(f"      [元数据] {meta_result.get('emotion', '无')}")
         
-        # 3. 歌词分析
+        # 3. 无歌词时用 LLM 从歌名+艺术家推断情绪
+        llm_meta_result = None
+        if not lyrics and self.kimi and title:
+            llm_meta_result = self._analyze_metadata_with_llm(title, artist, verbose)
+
+        # 4. 歌词分析
         lyrics_result = self._analyze_lyrics(lyrics, verbose) if lyrics else None
         if verbose:
             if lyrics_result:
                 print(f"      [歌词] {lyrics_result.get('emotion')} ({lyrics_result.get('method')})")
+            elif llm_meta_result:
+                print(f"      [LLM推断] {llm_meta_result.get('emotion')}")
             elif lyrics:
                 print(f"      [歌词] 分析失败")
             else:
                 print(f"      [歌词] 无歌词")
         
-        # 4. 融合决策
-        final_emotion, confidence, source = self._fuse_results(audio_result, meta_result, lyrics_result)
+        # 5. 融合决策（LLM 元数据推断权重等同歌词）
+        final_emotion, confidence, source = self._fuse_results(audio_result, meta_result, lyrics_result, llm_meta_result)
         
         if verbose:
             print(f"    [结果] {final_emotion} (conf={confidence:.2f}, src={source})")
@@ -327,7 +334,34 @@ class SimpleEmotionAnalyzer:
             'method': 'keyword'
         }
     
-    def _fuse_results(self, audio: Dict, meta: Dict, lyrics: Optional[Dict]) -> Tuple[str, float, str]:
+    def _analyze_metadata_with_llm(self, title: str, artist: Optional[str], verbose: bool = False) -> Optional[Dict]:
+        """无歌词时，用 Kimi 根据歌名+艺术家推断情绪"""
+        if not self.kimi:
+            return None
+        artist_part = f"歌手: {artist}\n" if artist else ""
+        prompt = f"""作为音乐情绪分析师，请仅根据以下信息判断这首歌的主导情绪。
+
+{artist_part}歌名: {title}
+
+情绪选项: happy(快乐), sad(悲伤), energetic(激情), calm(平静), romantic(浪漫), nostalgic(怀旧), angry(愤怒), focus(专注), party(派对)
+
+只返回JSON，不要其他文字。格式: {{"emotion": "...", "confidence": 0.0}}"""
+        try:
+            content = self.kimi.chat([{"role": "user", "content": prompt}], max_tokens=80)
+            if not content:
+                return None
+            match = re.search(r'\{[^}]+\}', content)
+            if match:
+                result = json.loads(match.group())
+                emotion = result.get('emotion', 'calm')
+                if emotion not in self.EMOTIONS:
+                    emotion = 'calm'
+                return {'emotion': emotion, 'confidence': float(result.get('confidence', 0.6)), 'method': 'llm_meta'}
+        except Exception:
+            pass
+        return None
+
+    def _fuse_results(self, audio: Dict, meta: Dict, lyrics: Optional[Dict], llm_meta: Optional[Dict] = None) -> Tuple[str, float, str]:
         """融合多维度结果 - 歌词主导"""
         # 如果歌词分析有高置信度结果，优先采用
         if lyrics and 'emotion' in lyrics:
@@ -355,13 +389,13 @@ class SimpleEmotionAnalyzer:
         # 传统融合（歌词置信度低或无时）
         candidates = {}
         
-        # 音频权重 25%
+        # 音频权重 20%
         if audio and 'energy' in audio:
             energy = audio['energy']
             if energy > 0.7:
-                candidates['energetic'] = candidates.get('energetic', 0) + 0.25
+                candidates['energetic'] = candidates.get('energetic', 0) + 0.20
             elif energy < 0.3:
-                candidates['calm'] = candidates.get('calm', 0) + 0.25
+                candidates['calm'] = candidates.get('calm', 0) + 0.20
         
         # 元数据权重 25%
         if meta and 'emotion' in meta:

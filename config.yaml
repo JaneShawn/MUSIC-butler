@@ -22,7 +22,7 @@ rag:
   similarity_threshold: 0.5
   
   # 运行设备: "cpu" 或 "cuda"（需要GPU支持）
-  device: "cuda"
+  device: "cpu"
   
 # ChromaDB配置
 vector_store:

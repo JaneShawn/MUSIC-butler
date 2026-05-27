@@ -11,10 +11,11 @@ def organize_files(strategy: str = "artist/album", dry_run: bool = True) -> str:
     'year/artist', 'flat'(平铺), 'rename_only'(仅重命名)。
     设置 dry_run=True 仅预览不执行，dry_run=False 实际执行文件移动。
     返回整理计划或执行结果（JSON格式）。"""
+    from graph.utils import load_config
     from agents.librarian import get_librarian
     from agents.organizer import OrganizerAgent, OrganizeStrategy
     librarian = get_librarian()
-    organizer = OrganizerAgent(config, librarian=librarian)
+    organizer = OrganizerAgent(load_config(), librarian=librarian)
 
     strategy_enum = OrganizeStrategy.from_string(strategy)
     plan = organizer.run("plan", strategy=strategy_enum)
@@ -42,10 +43,11 @@ def organize_files(strategy: str = "artist/album", dry_run: bool = True) -> str:
 def dedup_files(dry_run: bool = True) -> str:
     """检测并清理重复歌曲（基于艺术家+歌名判断）。dry_run=True 仅列出不删除。
     返回重复文件分组列表（JSON格式）。"""
+    from graph.utils import load_config
     from agents.librarian import get_librarian
     from agents.organizer import OrganizerAgent
     librarian = get_librarian()
-    organizer = OrganizerAgent(config, librarian=librarian)
+    organizer = OrganizerAgent(load_config(), librarian=librarian)
     duplicates = organizer._find_duplicates()
 
     formatted = {}
@@ -68,10 +70,11 @@ def dedup_files(dry_run: bool = True) -> str:
 def analyze_structure() -> str:
     """分析当前音乐库目录结构，返回统计数据（总歌曲、艺术家分布、流派分布、年代分布等）。
     用于理解库的组成。"""
+    from graph.utils import load_config
     from agents.librarian import get_librarian
     from agents.organizer import OrganizerAgent
     librarian = get_librarian()
-    organizer = OrganizerAgent(config, librarian=librarian)
+    organizer = OrganizerAgent(load_config(), librarian=librarian)
     analysis = organizer.run("analyze")
     return json.dumps(analysis, ensure_ascii=False, indent=2)
 

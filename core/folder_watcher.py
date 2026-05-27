@@ -12,6 +12,7 @@ from watchdog.events import FileSystemEventHandler, FileSystemEvent
 
 from core.logging_config import get_logger
 from core.music_library_db import get_library_db
+from hermes import FSMonitorTrigger
 
 logger = get_logger(__name__)
 
@@ -71,6 +72,7 @@ class FolderWatcher:
         self._handler: Optional[MusicFileHandler] = None
         self._running = False
         self._librarian = None  # set via set_librarian()
+        self._trigger = FSMonitorTrigger()  # Hermes Trigger 层
 
     def set_librarian(self, librarian):
         self._librarian = librarian
@@ -94,7 +96,8 @@ class FolderWatcher:
                 deleted.append(p)
 
         if added:
-            logger.info(f"检测到 {len(added)} 个新文件，触发扫描")
+            event = self._trigger.normalize("files_added", added)
+            logger.info(f"[{event.source}] {event.content}: {len(added)} 个新文件，触发扫描")
             try:
                 result = self._librarian.run("scan")
                 new_count = result.get('new_songs', 0)
@@ -105,7 +108,8 @@ class FolderWatcher:
                 logger.error(f"扫描失败: {e}")
 
         if deleted:
-            logger.info(f"检测到 {len(deleted)} 个文件被删除，清理索引")
+            event = self._trigger.normalize("files_deleted", deleted)
+            logger.info(f"[{event.source}] {event.content}: {len(deleted)} 个文件被删除，清理索引")
             for fp in deleted:
                 song_id = self._librarian._file_to_id(fp)
                 try:

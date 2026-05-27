@@ -1,12 +1,16 @@
 """
-ToolRegistry — Function Calling 工具定义（OpenAI 兼容格式）。
+[DEPRECATED] ToolRegistry — Function Calling 工具定义（OpenAI 兼容格式）。
 
-[架构说明]
-每个 tool 的 name 必须与 chat_unified.py 里 execute() 的 handlers dict key 一致。
-新增功能的流程：
-  1. 在这里加 tool 定义（name + description + parameters）
-  2. 在 chat/handlers/ 对应 mixin 里加 handle_xxx 方法
-  3. 在 chat_unified.py 的 execute() handlers dict 加一行映射
+Phase 2 起不再使用。架构已变更：
+  旧: intent_router → LLM FC (32 个细粒度 tool) → 选 intent
+  新: HermesGateway → LLM FC (4 个 agent dispatch) → 选 agent → agent 内部 ReAct 选 tool
+
+各 Agent 的工具现在定义在 graph/tools/ 下：
+  - library_tools.py  (librarian, 10 tools)
+  - organizer_tools.py (organizer, 3 tools)
+  - metadata_tools.py  (metadata, 5 tools)
+
+保留此文件仅作参考。
 """
 from typing import Dict, Any
 

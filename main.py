@@ -36,6 +36,7 @@ if _env_path.exists():
 else:
     load_dotenv()
 
+from hermes import CLITrigger
 from agents import OrganizerAgent, OrganizeStrategy
 from agents.librarian import get_librarian
 
@@ -55,8 +56,12 @@ def cmd_query(args):
     """查询歌曲"""
     agent = get_librarian()
 
-    print(f"🔍 查询: {args.text}")
-    results = agent.query(args.text, top_k=args.top_k)
+    # Hermes Trigger 层：标准化 CLI 输入
+    trigger = CLITrigger()
+    event = trigger.normalize(args.text)
+
+    print(f"🔍 查询: {event.content}")
+    results = agent.query(event.content, top_k=args.top_k)
 
     if not results:
         print("❌ 没有找到匹配的歌曲")

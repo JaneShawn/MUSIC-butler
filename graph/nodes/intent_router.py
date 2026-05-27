@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""意图路由节点 — 四级路由：L0命令映射 → L1关键词 → L2 LLM FC → L3 兜底"""
+"""
+[DEPRECATED] 意图路由节点 — 四级路由：L0命令映射 → L1关键词 → L2 LLM FC → L3 兜底
+
+Phase 2 起已由 hermes/gateway.py (HermesGateway) + graph/nodes/gateway_node.py 替代。
+保留此文件仅作参考，不再被 graph 引用。
+"""
 import json
 import random
 import re

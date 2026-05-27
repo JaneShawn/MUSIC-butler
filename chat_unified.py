@@ -3,6 +3,8 @@
 Music Agent Chat — LangGraph 多Agent 对话入口
 所有意图路由 & Agent 调度由 graph/ 下的 LangGraph 图处理。
 chat_unified.py 只负责：接收用户输入 → 传给 graph → 输出响应。
+
+[Phase 1] Hermes Trigger 层：使用 ChatTrigger 标准化用户输入。
 """
 import sys
 import io
@@ -20,6 +22,9 @@ if env_path.exists():
 else:
     load_dotenv()
 
+# ── Hermes Trigger ──
+from hermes import ChatTrigger
+
 # ── LangGraph 入口 ──
 from graph.graph import music_graph
 from graph.utils import load_config
@@ -35,6 +40,9 @@ class MusicAgentChat:
         self.config = load_config()
         self.graph = music_graph
         self.thread_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # Hermes Trigger 层：标准化聊天输入
+        self.trigger = ChatTrigger(user_id="jane")
 
         # 自动启动文件监控
         self._start_watcher()
@@ -108,10 +116,13 @@ class MusicAgentChat:
         if monitor_result is not None:
             return monitor_result
 
+        # Hermes Trigger 层：标准化输入为 TriggerEvent
+        event = self.trigger.normalize(user_input)
+
         config = {"configurable": {"thread_id": self.thread_id}}
 
         result = self.graph.invoke(
-            {"messages": [HumanMessage(content=user_input)]},
+            {"messages": [HumanMessage(content=event.content)]},
             config=config,
         )
 

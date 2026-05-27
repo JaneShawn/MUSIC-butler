@@ -1,69 +1,46 @@
 # -*- coding: utf-8 -*-
-"""条件边路由函数 — 根据意图分发到对应 Agent 节点"""
+"""条件边路由函数 — 根据意图分发到对应 Agent 节点
+
+[Phase 2] Hermes Gateway 已替代旧 intent_router 做意图识别，
+此文件只负责 intent → node_name 的纯转发映射。
+"""
 
 
 def route_by_intent(state) -> str:
-    """根据意图返回下一个节点名称"""
+    """根据意图返回下一个节点名称。
+
+    优先使用 Hermes Gateway 直接指定的 target_agent，
+    否则用 intent 做映射。
+    """
+    target = state.get("target_agent", "")
+    if target in {"librarian", "organizer", "metadata", "respond"}:
+        return target
+
     intent = state.get("intent", "respond")
 
-    routing_map = {
-        # Librarian 域
-        "query": "librarian",
-        "search": "librarian",
-        "play_by_name": "librarian",
-        "play_by_artist": "librarian",
-        "play_all": "librarian",
-        "play_random": "librarian",
-        "play": "librarian",
-        "play_all_results": "librarian",
-        "play_all_except": "librarian",
-        "batch_select": "librarian",
-        "playlist_from_results": "librarian",
-        "query_emotion_songs": "librarian",
-        "query_language_songs": "librarian",
-        "recommend_random": "librarian",
+    # Librarian 域
+    if intent in {
+        "query", "search", "play_by_name", "play_by_artist",
+        "play_all", "play_random", "play", "play_all_results",
+        "play_all_except", "batch_select", "playlist_from_results",
+        "query_emotion_songs", "query_language_songs",
+        "recommend_random", "scan", "show_language_stats",
+        "analyze_emotion", "clear_emotion_cache", "show_library_stats",
+    }:
+        return "librarian"
 
-        # Organizer 域
-        "organize": "organizer",
-        "dedup": "organizer",
-        "analyze": "organizer",
+    # Organizer 域
+    if intent in {"organize", "dedup", "analyze"}:
+        return "organizer"
 
-        # Metadata 域
-        "fix_metadata": "metadata",
-        "fix_single": "metadata",
-        "diagnose": "metadata",
-        "fix_metadata_issues": "metadata",
-        "sync_emotion": "metadata",
-        "correct_emotion": "metadata",
-        "correct_language": "metadata",
-        "update_song_info": "metadata",
+    # Metadata 域
+    if intent in {
+        "fix_metadata", "fix_single", "diagnose",
+        "fix_metadata_issues", "sync_emotion",
+        "correct_emotion", "correct_language", "update_song_info",
+        "detect_single_language", "analyze_single_emotion",
+    }:
+        return "metadata"
 
-        # scan/stats/emotion 归 librarian
-        "scan": "librarian",
-        "show_language_stats": "librarian",
-        "analyze_emotion": "librarian",
-        "clear_emotion_cache": "librarian",
-        "show_library_stats": "librarian",
-
-        # 直接 respond 的简单指令（纯文本，无业务逻辑）
-        "help": "respond",
-        "clear": "respond",
-        "exit": "respond",
-        "cancel": "respond",
-        "list_playlists": "respond",
-        "list_models": "respond",
-        "switch_model": "respond",
-        "current_model": "respond",
-        "correct_language": "respond",
-        "correct_emotion": "respond",
-        "update_song_info": "respond",
-        "detect_single_language": "respond",
-        "analyze_single_emotion": "respond",
-        "playlist": "respond",
-        "smart_playlist": "respond",
-        "export_library": "respond",
-        "import_library": "respond",
-        "convert": "respond",
-    }
-
-    return routing_map.get(intent, "respond")
+    # Respond 域 — 所有其他
+    return "respond"

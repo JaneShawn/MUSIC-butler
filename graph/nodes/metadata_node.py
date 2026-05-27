@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Metadata Agent 节点 — 元数据修复与补全（含 human-in-the-loop）"""
+"""
+[DEPRECATED] Metadata Agent 节点 — 元数据修复与补全（过程式 if/elif）
+
+Phase 3 起已由 metadata_agent.py (ReAct agent) 替代。
+保留此文件仅作参考，不再被 graph 引用。
+"""
 from typing import Dict, Any
 import json
 

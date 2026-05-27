@@ -10,8 +10,11 @@ import streamlit as st
 import yaml
 from datetime import datetime
 
+from hermes import WebTrigger
 from agents import OrganizerAgent
 
+# Hermes Trigger 层：标准化 Web 输入
+web_trigger = WebTrigger(user_id="web")
 
 st.set_page_config(
     page_title="Music Agent",
@@ -138,7 +141,8 @@ elif page == "音乐库":
                          placeholder="例如：周杰伦的歌、适合下雨听的国语歌")
 
     if query:
-        results = librarian.query(query, top_k=10)
+        event = web_trigger.normalize(query)
+        results = librarian.query(event.content, top_k=10)
         if results:
             st.write(f"找到 {len(results)} 首相关歌曲：")
             for i, item in enumerate(results):
@@ -262,8 +266,9 @@ elif page == "智能歌单":
                 st.warning("请输入歌曲描述")
             else:
                 with st.spinner("正在理解你的需求并搜索歌曲..."):
+                    event = web_trigger.normalize(nl_query)
                     result = playlist_engine.create_playlist(
-                        query_text=nl_query,
+                        query_text=event.content,
                         name=playlist_name or None,
                         is_dynamic=is_dynamic,
                     )

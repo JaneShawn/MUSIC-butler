@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Organizer Agent 节点 — 文件整理与去重（含 human-in-the-loop）"""
+"""
+[DEPRECATED] Organizer Agent 节点 — 文件整理与去重（过程式 if/elif）
+
+Phase 3 起已由 organizer_agent.py (ReAct agent) 替代。
+保留此文件仅作参考，不再被 graph 引用。
+"""
 from typing import Dict, Any
 
 from graph.state import MusicAgentState

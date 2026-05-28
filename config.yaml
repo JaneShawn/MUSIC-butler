@@ -24,10 +24,19 @@ rag:
   # 运行设备: "cpu" 或 "cuda"（需要GPU支持）
   device: "cpu"
   
+# Hybrid Search 混合检索配置
+# Dense (ChromaDB语义) + Sparse (BM25关键词) + RRF融合
+  hybrid:
+    enabled: true          # 是否启用混合检索
+    sparse_weight: 1.0     # BM25 路权重（RRF 乘数）
+    dense_weight: 1.0      # Dense 路权重
+    rrf_k: 60              # RRF 平滑常数（越大排名差异越平滑）
+
 # ChromaDB配置
 vector_store:
   persist_directory: "./data/chroma"
   collection_name: "music_library"
+  bm25_index_path: "./data/bm25_index.json"
   # 继承RAG配置，也可单独指定：
   # embedding_model: "bge-small-zh"
   # device: "cpu"

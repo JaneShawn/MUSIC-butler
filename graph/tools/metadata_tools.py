@@ -48,18 +48,13 @@ def _find_song(song_hint: str):
 
 
 def _has_embedded_cover(file_path: str) -> bool:
-    """检查音频文件是否内嵌封面。"""
-    try:
-        from mutagen import File as MutagenFile
-        f = MutagenFile(file_path)
-        if f and hasattr(f, 'tags'):
-            return bool(f.tags and any(
-                f.tags.getall(k) for k in f.tags.keys()
-                if k.startswith('APIC') or k.startswith('PIC') or k == 'covr'
-            ))
-    except Exception:
-        pass
-    return False
+    """检查音频文件是否已有内嵌封面。
+
+    直接复用 LibrarianAgent.has_embedded_cover——它按格式分别处理
+    FLAC (pictures 属性)、MP3 (ID3 APIC)、M4A/MP4 (covr key)。
+    """
+    from agents.librarian import LibrarianAgent
+    return LibrarianAgent.has_embedded_cover(file_path)
 
 
 # ── Tools ──────────────────────────────────────────────────
@@ -76,12 +71,35 @@ def diagnose_metadata() -> str:
     incomplete = []
     for song in agent.songs.values():
         issues = []
-        if song.artist == "Unknown":
-            issues.append("缺艺术家")
-        if song.title == "Unknown" or not song.title:
-            issues.append("缺标题")
-        if not song.album or song.album == "Unknown":
-            issues.append("缺专辑")
+        # 交叉校验：DB 中为 "Unknown" 时，直接从文件重读元数据
+        file_meta = None
+        def _get_file_meta():
+            nonlocal file_meta
+            if file_meta is None:
+                try:
+                    from core.metadata_fetcher import MetadataFetcher
+                    fetcher = MetadataFetcher({})
+                    file_meta = fetcher.extract_from_file(song.file_path)
+                except Exception:
+                    file_meta = {}
+            return file_meta
+
+        is_unknown_artist = song.artist == "Unknown"
+        is_unknown_title = song.title == "Unknown" or not song.title
+        is_unknown_album = not song.album or song.album == "Unknown"
+
+        if is_unknown_artist:
+            meta = _get_file_meta()
+            if meta.get("artist", "Unknown") == "Unknown":
+                issues.append("缺艺术家")
+        if is_unknown_title:
+            meta = _get_file_meta()
+            if not meta.get("title") or meta.get("title", "Unknown") == "Unknown":
+                issues.append("缺标题")
+        if is_unknown_album:
+            meta = _get_file_meta()
+            if not meta.get("album") or meta.get("album", "Unknown") == "Unknown":
+                issues.append("缺专辑")
         if not _has_embedded_cover(song.file_path):
             issues.append("缺封面")
         if issues:
@@ -92,13 +110,22 @@ def diagnose_metadata() -> str:
                 "issues": issues,
             })
 
-    return json.dumps({
-        "total_songs": stats.get("total_songs", 0),
-        "artists": stats.get("artists", 0),
-        "genres": stats.get("genres", 0),
-        "incomplete_count": len(incomplete),
-        "incomplete_samples": incomplete[:10],
-    }, ensure_ascii=False, indent=2)
+    if not incomplete:
+        return "所有歌曲元数据完整。"
+
+    lines = [
+        f"共 {stats.get('total_songs', 0)} 首 | {stats.get('artists', 0)} 位艺术家 | {stats.get('genres', 0)} 种流派",
+        f"元数据不完整: {len(incomplete)} 首",
+        "",
+    ]
+    for item in incomplete[:10]:
+        fname = Path(item["file"]).name
+        issues_str = "、".join(item["issues"])
+        lines.append(f"  • {item['artist']} - {item['title']}")
+        lines.append(f"    {issues_str}  ({fname})")
+    if len(incomplete) > 10:
+        lines.append(f"  ... 还有 {len(incomplete) - 10} 首")
+    return "\n".join(lines)
 
 
 @tool
@@ -164,20 +191,40 @@ def fix_metadata_batch(dry_run: bool = True) -> str:
 
 
 def _collect_incomplete():
-    """内部辅助：收集元数据不完整的歌曲列表。"""
+    """内部辅助：收集元数据不完整的歌曲列表。
+    交叉校验：DB 中为 Unknown 时，直接从文件重读元数据确认。"""
     from agents.librarian import get_librarian
+    from core.metadata_fetcher import MetadataFetcher
 
     agent = get_librarian()
     stats = agent.get_stats()
+    fetcher = MetadataFetcher({})
     incomplete = []
     for song in agent.songs.values():
         issues = []
+        # 交叉校验：DB 中为 Unknown 时从文件重读
+        file_meta = None
         if song.artist == "Unknown":
-            issues.append("缺艺术家")
+            try:
+                file_meta = file_meta or fetcher.extract_from_file(song.file_path)
+                if file_meta.get("artist", "Unknown") == "Unknown":
+                    issues.append("缺艺术家")
+            except Exception:
+                issues.append("缺艺术家")
         if song.title == "Unknown" or not song.title:
-            issues.append("缺标题")
+            try:
+                file_meta = file_meta or fetcher.extract_from_file(song.file_path)
+                if not file_meta.get("title") or file_meta.get("title", "Unknown") == "Unknown":
+                    issues.append("缺标题")
+            except Exception:
+                issues.append("缺标题")
         if not song.album or song.album == "Unknown":
-            issues.append("缺专辑")
+            try:
+                file_meta = file_meta or fetcher.extract_from_file(song.file_path)
+                if not file_meta.get("album") or file_meta.get("album", "Unknown") == "Unknown":
+                    issues.append("缺专辑")
+            except Exception:
+                issues.append("缺专辑")
         if not _has_embedded_cover(song.file_path):
             issues.append("缺封面")
         if issues:

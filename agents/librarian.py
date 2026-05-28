@@ -992,6 +992,11 @@ class LibrarianAgent(BaseAgent):
                 
                 self.log("info", f"Restored {len(records)} songs from music_library_db")
                 print(f"[Librarian] 已从 music_library_db 恢复 {len(records)} 首歌曲")
+
+                # 如果 BM25 索引不存在，从现有歌曲构建
+                bm25_path = self.config.get("vector_store", {}).get("bm25_index_path", "./data/bm25_index.json")
+                if not Path(bm25_path).exists():
+                    self._build_bm25_from_songs(bm25_path)
                 return
             
             # DB 为空但 ChromaDB 有数据：迁移旧数据并回填到 DB
@@ -1064,6 +1069,21 @@ class LibrarianAgent(BaseAgent):
         
         return language, source, confidence
     
+    def _build_bm25_from_songs(self, bm25_path: str = None):
+        """从 self.songs 重建 BM25 索引（首次启动或索引丢失时调用）。"""
+        if bm25_path is None:
+            bm25_path = self.config.get("vector_store", {}).get("bm25_index_path", "./data/bm25_index.json")
+        if not self.songs:
+            return
+        docs = []
+        for song in self.songs.values():
+            text_parts = [song.title or "", song.artist or "", song.album or ""]
+            if song.genre:
+                text_parts.append(song.genre)
+            docs.append({"id": song.id, "text": " ".join(filter(None, text_parts))})
+        self.vector_store.build_bm25_index(docs)
+        print(f"[Librarian] BM25 index built from {len(docs)} existing songs")
+
     def _index_songs(self, songs: List[Song]):
         """将歌曲添加到向量数据库和音乐库数据库"""
         texts = []
@@ -1143,10 +1163,14 @@ class LibrarianAgent(BaseAgent):
             })
         
         self.vector_store.add(texts, ids, metadatas)
-        
+
+        # 构建 BM25 稀疏索引（用于混合检索）
+        bm25_docs = [{"id": id_, "text": text_} for id_, text_ in zip(ids, texts)]
+        self.vector_store.build_bm25_index(bm25_docs)
+
         # 打印语言分布统计
         print(f"  [语言分布] {dict(sorted(lang_stats.items(), key=lambda x: -x[1]))}")
-        
+
         self.log("info", f"Indexed {len(songs)} songs to vector store")
 
 

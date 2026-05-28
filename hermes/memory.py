@@ -2,7 +2,8 @@
 """
 Hermes Memory — 结构化语义记忆存储
 
-基于 SQLite 的轻量记忆系统，Gateway 路由时查询相关记忆注入上下文。
+[Phase 6] Hybrid Memory: SQLite 精确匹配 + ChromaDB 语义检索。
+Gateway 路由时查询相关记忆注入上下文。
 记忆会在每次 Reflect 后自动更新，长期不用的记忆会衰减。
 """
 import sqlite3
@@ -11,6 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import chromadb
+from chromadb.config import Settings as ChromaSettings
 
 
 @dataclass
@@ -40,6 +44,7 @@ class MemoryStore:
         self._db_path = db_path
         self._lock = threading.Lock()
         self._init_db()
+        self._init_chroma()
 
     def _init_db(self):
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +70,22 @@ class MemoryStore:
             """)
             conn.commit()
 
+    def _init_chroma(self):
+        """初始化 ChromaDB collection 用于语义记忆检索。"""
+        try:
+            chroma_dir = str(Path(self._db_path).parent / "chroma_memory")
+            self._chroma_client = chromadb.PersistentClient(
+                path=chroma_dir,
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
+            self._memory_collection = self._chroma_client.get_or_create_collection(
+                name="hermes_memory",
+                metadata={"hnsw:space": "cosine"},
+            )
+        except Exception:
+            self._chroma_client = None
+            self._memory_collection = None
+
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
@@ -72,7 +93,8 @@ class MemoryStore:
 
     def upsert(self, mtype: str, key: str, value: str,
                confidence: float = 0.5, source: str = "") -> None:
-        """插入或更新一条记忆。相同 key 会合并并提高置信度。"""
+        """插入或更新一条记忆。相同 key 会合并并提高置信度。
+        同时写入 SQLite（精确匹配）和 ChromaDB（语义检索）。"""
         now = datetime.now().isoformat()
         with self._lock:
             with self._get_conn() as conn:
@@ -82,7 +104,6 @@ class MemoryStore:
                 ).fetchone()
 
                 if existing:
-                    # 合并：加权平均置信度，保留更高的
                     new_conf = max(confidence, existing["confidence"])
                     new_conf = (existing["confidence"] * existing["access_count"] + confidence) / (existing["access_count"] + 1)
                     conn.execute(
@@ -100,16 +121,33 @@ class MemoryStore:
                     )
                 conn.commit()
 
+            # 同步写入 ChromaDB（语义检索）
+            if self._memory_collection is not None:
+                try:
+                    doc = f"{key} {value}"
+                    self._memory_collection.upsert(
+                        documents=[doc],
+                        ids=[key],
+                    )
+                except Exception:
+                    pass
+
     def query_relevant(self, context: str, limit: int = 5) -> List[Memory]:
-        """根据上下文关键词查询相关记忆。简单关键词匹配。"""
+        """混合检索相关记忆：SQLite 精确匹配 + ChromaDB 语义检索。
+
+        两路结果合并去重：
+          - SQLite: 关键词包含匹配（保持精确 key 命中的优势）
+          - ChromaDB: 语义相似检索（补上跨语义关联）
+        """
         now = datetime.now().isoformat()
         words = [w for w in context.replace('，', ' ').replace(',', ' ').split()
                  if len(w) >= 1][:10]
+        seen_keys: set = set()
+        results: List[Memory] = []
 
         with self._lock:
+            # 第一路: SQLite 精确匹配（按类型优先级 + 置信度排序）
             with self._get_conn() as conn:
-                results = []
-                # 按类型优先级 + 置信度排序
                 rows = conn.execute(
                     """SELECT * FROM memories
                        ORDER BY
@@ -129,18 +167,17 @@ class MemoryStore:
                 for row in rows:
                     rkey = row["key"]
                     rval = row["value"]
-                    # 检查是否与当前上下文相关
                     if any(w in rkey or w in rval for w in words if len(w) >= 2):
-                        results.append(Memory(
+                        mem = Memory(
                             id=row["id"], mtype=row["mtype"], key=rkey, value=rval,
                             confidence=row["confidence"], source=row["source"],
                             created_at=row["created_at"], last_accessed=row["last_accessed"],
                             access_count=row["access_count"],
-                        ))
-                    if len(results) >= limit:
-                        break
+                        )
+                        results.append(mem)
+                        seen_keys.add(rkey)
 
-                # 更新访问时间
+                # 更新 SQLite 命中记录的访问时间
                 for m in results:
                     conn.execute(
                         "UPDATE memories SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?",
@@ -148,7 +185,40 @@ class MemoryStore:
                     )
                 conn.commit()
 
-        return results
+            # 第二路: ChromaDB 语义检索（补充 SQLite 没命中的）
+            if self._memory_collection is not None and len(results) < limit:
+                try:
+                    chroma_results = self._memory_collection.query(
+                        query_texts=[context],
+                        n_results=limit,
+                    )
+                    if chroma_results and chroma_results.get("ids"):
+                        for i, doc_id in enumerate(chroma_results["ids"][0]):
+                            if doc_id in seen_keys:
+                                continue
+                            doc_text = chroma_results["documents"][0][i] if chroma_results.get("documents") else ""
+                            # 从 SQLite 查完整记录
+                            with self._get_conn() as conn:
+                                row = conn.execute(
+                                    "SELECT * FROM memories WHERE key = ?", (doc_id,)
+                                ).fetchone()
+                                if row:
+                                    mem = Memory(
+                                        id=row["id"], mtype=row["mtype"], key=row["key"],
+                                        value=row["value"], confidence=row["confidence"],
+                                        source=row["source"],
+                                        created_at=row["created_at"],
+                                        last_accessed=row["last_accessed"],
+                                        access_count=row["access_count"],
+                                    )
+                                    results.append(mem)
+                                    seen_keys.add(doc_id)
+                                    if len(results) >= limit:
+                                        break
+                except Exception:
+                    pass
+
+        return results[:limit]
 
     def list_all(self, mtype: str = "") -> List[Memory]:
         """列出所有记忆，可按类型过滤。"""
@@ -172,12 +242,18 @@ class MemoryStore:
         ) for r in rows]
 
     def forget(self, key: str) -> bool:
-        """删除一条记忆。"""
+        """删除一条记忆（SQLite + ChromaDB）。"""
         with self._lock:
             with self._get_conn() as conn:
                 cur = conn.execute("DELETE FROM memories WHERE key = ?", (key,))
                 conn.commit()
-                return cur.rowcount > 0
+                deleted = cur.rowcount > 0
+            if deleted and self._memory_collection is not None:
+                try:
+                    self._memory_collection.delete(ids=[key])
+                except Exception:
+                    pass
+            return deleted
 
     def decay(self, threshold: float = 0.1) -> int:
         """衰减低置信度记忆，删除置信度低于阈值的。返回删除数。"""

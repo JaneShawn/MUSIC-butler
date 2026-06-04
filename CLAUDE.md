@@ -4,19 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Music Agent —— 本地音乐库管理 + 多 Agent 对话系统。用户 Jane，约 322 首歌，存储在 `C:\Users\JaneShown\Desktop\music\MUSIC\`。
-
-## 常用命令
-
-```bash
-python main.py scan              # 扫描音乐库
-python main.py query "周杰伦"    # CLI 搜索
-python main.py web               # 启动 Streamlit Web UI (8501)
-python main.py organize          # 整理文件
-python chat_unified.py           # 交互式对话（主入口）
-```
-
-没有可用的测试。`tests/test_librarian.py` 已过时。
+Music Agent —— 本地音乐库管理 + 多 Agent 对话系统。用户 Jane歌曲数量可事实增长，存储在 `C:\Users\JaneShown\Desktop\music\MUSIC\`。
 
 ## 架构：Hermes（三层主干 + 一圈闭环）
 

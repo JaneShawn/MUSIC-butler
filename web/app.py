@@ -135,36 +135,263 @@ if page == "首页":
 # 音乐库页面
 # ============================================================
 elif page == "音乐库":
+    from core.music_library_db import get_library_db
+    lib_db = get_library_db()
+
     st.title("我的音乐库")
 
-    query = st.text_input("搜索歌曲（支持自然语言）",
-                         placeholder="例如：周杰伦的歌、适合下雨听的国语歌")
+    # 初始化 session state
+    if "lib_filter_artist" not in st.session_state:
+        st.session_state.lib_filter_artist = "全部"
+    if "lib_filter_album" not in st.session_state:
+        st.session_state.lib_filter_album = "全部"
+    if "lib_filter_genre" not in st.session_state:
+        st.session_state.lib_filter_genre = "全部"
+    if "lib_filter_lang" not in st.session_state:
+        st.session_state.lib_filter_lang = "全部"
+    if "lib_filter_emotion" not in st.session_state:
+        st.session_state.lib_filter_emotion = "全部"
+    if "lib_edit_song" not in st.session_state:
+        st.session_state.lib_edit_song = None
 
-    if query:
-        event = web_trigger.normalize(query)
-        results = librarian.query(event.content, top_k=10)
-        if results:
-            st.write(f"找到 {len(results)} 首相关歌曲：")
-            for i, item in enumerate(results):
-                song = item["song"]
-                with st.container():
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.write(f"**{song.title}** - {song.artist}")
-                        st.caption(f"专辑: {song.album} | 流派: {song.genre or '未知'}")
-                    with col2:
-                        st.progress(item["similarity"], text=f"匹配度: {item['similarity']:.1%}")
-                    st.divider()
-        else:
-            st.info("没有找到匹配的歌曲")
+    # ── 搜索栏 ──
+    search_query = st.text_input("🔍 搜索",
+        placeholder="歌名、艺术家名，或自然语言如 '适合下雨听的国语歌'")
+
+    # ── 筛选器 ──
+    with st.expander("📋 筛选", expanded=False):
+        artists = ["全部"] + lib_db.list_artists()
+        albums = ["全部"] + lib_db.list_albums()
+        genres = ["全部"] + lib_db.list_genres()
+        languages = ["全部"] + lib_db.list_languages()
+        emotions = ["全部"] + [
+            {"happy": "快乐", "sad": "悲伤", "energetic": "激情", "calm": "平静",
+             "romantic": "浪漫", "nostalgic": "怀旧", "angry": "愤怒",
+             "focus": "专注", "party": "派对"}.get(e, e)
+            for e in lib_db.list_emotions()
+        ]
+        emotion_map = {
+            "快乐": "happy", "悲伤": "sad", "激情": "energetic", "平静": "calm",
+            "浪漫": "romantic", "怀旧": "nostalgic", "愤怒": "angry",
+            "专注": "focus", "派对": "party",
+        }
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.session_state.lib_filter_artist = st.selectbox(
+                "艺术家", artists, key="filt_artist")
+        with c2:
+            st.session_state.lib_filter_album = st.selectbox(
+                "专辑", albums, key="filt_album")
+        with c3:
+            st.session_state.lib_filter_genre = st.selectbox(
+                "流派", genres, key="filt_genre")
+
+        c4, c5 = st.columns(2)
+        with c4:
+            st.session_state.lib_filter_lang = st.selectbox(
+                "语言", languages, key="filt_lang")
+        with c5:
+            st.session_state.lib_filter_emotion = st.selectbox(
+                "情绪", emotions, key="filt_emotion")
+
+    # ── 查询 ──
+    if search_query:
+        event = web_trigger.normalize(search_query)
+        results = librarian.query(event.content, top_k=20)
+        songs_to_show = []
+        seen = set()
+        for item in results:
+            s = item["song"]
+            key = f"{s.artist}|{s.title}"
+            if key not in seen:
+                seen.add(key)
+                rec = lib_db.get_record(s.artist, s.title)
+                songs_to_show.append((s, rec, item.get("similarity", 0)))
     else:
-        stats = librarian.get_stats()
-        st.subheader("库统计")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("总歌曲", stats["total_songs"])
-        col2.metric("艺术家", stats["artists"])
-        col3.metric("专辑", stats["albums"])
-        col4.metric("流派", stats["genres"])
+        fa = st.session_state.lib_filter_artist
+        fb = st.session_state.lib_filter_album
+        fg = st.session_state.lib_filter_genre
+        fl = st.session_state.lib_filter_lang
+        fe_cn = st.session_state.lib_filter_emotion
+        fe = emotion_map.get(fe_cn, None)
+
+        records = lib_db.filter_songs(
+            artist=fa if fa != "全部" else None,
+            album=fb if fb != "全部" else None,
+            genre=fg if fg != "全部" else None,
+            language=fl if fl != "全部" else None,
+            emotion=fe if fe_cn != "全部" else None,
+            limit=500,
+        )
+        songs_to_show = []
+        for rec in records:
+            song = librarian.songs.get(librarian._file_to_id(rec.file_path))
+            songs_to_show.append((song, rec, None))
+
+    # ── 列表 ──
+    if not songs_to_show:
+        st.info("没有匹配的歌曲")
+    else:
+        st.caption(f"共 {len(songs_to_show)} 首")
+
+        # 表头
+        h1, h2, h3, h4, h5, h6, h7 = st.columns([3, 2, 1.5, 1, 1, 0.8, 0.8])
+        h1.caption("**标题**")
+        h2.caption("**艺术家**")
+        h3.caption("**专辑**")
+        h4.caption("**语言**")
+        h5.caption("**情绪**")
+        h6.caption("**详情**")
+        h7.caption("**编辑**")
+
+        st.divider()
+
+        for song, rec, sim in songs_to_show[:200]:
+            if song is None and rec is None:
+                continue
+            title = (song.title if song else rec.title) or "?"
+            artist = (song.artist if song else rec.artist) or "?"
+            album = rec.album if rec and rec.album not in ("Unknown", "") else "-"
+            language = rec.language if rec and rec.language else "-"
+            emotion_raw = rec.emotion if rec and rec.emotion else "-"
+            emo_display = {
+                "happy": "😊快乐", "sad": "😢悲伤", "energetic": "🔥激情",
+                "calm": "😌平静", "romantic": "💕浪漫", "nostalgic": "📻怀旧",
+                "angry": "😡愤怒", "focus": "🧠专注", "party": "🎉派对",
+            }.get(emotion_raw, emotion_raw)
+
+            song_key = f"{artist}|{title}"
+            c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.5, 1.8, 1.5, 0.8, 0.8, 0.6, 0.6, 0.6])
+            with c1:
+                sim_str = f"  `{sim:.0%}`" if sim is not None else ""
+                st.write(f"{title}{sim_str}")
+            with c2:
+                st.write(artist[:20])
+            with c3:
+                st.write(album[:15])
+            with c4:
+                st.write(language)
+            with c5:
+                st.write(emo_display)
+            with c6:
+                detail_key = f"detail_{song_key}"
+                if st.button("📋", key=detail_key, help="查看详情"):
+                    st.session_state[f"exp_{song_key}"] = not st.session_state.get(f"exp_{song_key}", False)
+            with c7:
+                edit_key = f"edit_{hash(song_key) % 100000}"
+                if st.button("✏️", key=edit_key, help="编辑标签"):
+                    st.session_state.lib_edit_song = (artist, title, rec)
+            with c8:
+                pl_key = f"addpl_{hash(song_key) % 100000}"
+                if st.button("➕", key=pl_key, help="加入歌单"):
+                    st.session_state.lib_add_to_pl = (artist, title, rec.file_path if rec else "")
+
+            # 展开详情
+            if st.session_state.get(f"exp_{song_key}", False):
+                with st.expander("", expanded=True):
+                    if rec:
+                        d1, d2, d3 = st.columns(3)
+                        with d1:
+                            st.caption(f"流派: {rec.genre or '-'}")
+                            st.caption(f"年份: {rec.year or '-'}")
+                            st.caption(f"时长: {rec.duration or '-'}s")
+                        with d2:
+                            st.caption(f"播放次数: {rec.play_count}")
+                            st.caption(f"最后播放: {rec.last_played or '-'}")
+                            st.caption(f"有歌词: {'是' if rec.has_lyrics_int else '否'}")
+                        with d3:
+                            st.caption(f"文件: `...{rec.file_path[-40:]}`" if rec.file_path else "")
+                            st.caption(f"备注: {rec.notes or '-'}")
+
+                    if st.button("关闭详情", key=f"close_{song_key}"):
+                        st.session_state[f"exp_{song_key}"] = False
+                        st.rerun()
+
+            st.divider()
+
+        # ── 单曲编辑弹窗 ──
+        if st.session_state.lib_edit_song is not None:
+            edit_artist, edit_title, edit_rec = st.session_state.lib_edit_song
+            st.divider()
+            st.subheader(f"✏️ 编辑: {edit_artist} - {edit_title}")
+
+            with st.form("edit_song_form"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    new_lang = st.selectbox(
+                        "语言",
+                        ["", "国语", "英语", "粤语", "日语", "韩语", "法语", "德语", "西班牙语"],
+                        index=(["", "国语", "英语", "粤语", "日语", "韩语", "法语", "德语", "西班牙语"]
+                               .index(edit_rec.language) if edit_rec and edit_rec.language in
+                               ["", "国语", "英语", "粤语", "日语", "韩语", "法语", "德语", "西班牙语"] else 0),
+                    )
+                    new_genre = st.text_input("流派", value=edit_rec.genre if edit_rec else "")
+                with col_b:
+                    emo_options = ["", "happy", "sad", "energetic", "calm", "romantic", "nostalgic", "angry", "focus", "party"]
+                    emo_labels = ["无", "😊快乐", "😢悲伤", "🔥激情", "😌平静", "💕浪漫", "📻怀旧", "😡愤怒", "🧠专注", "🎉派对"]
+                    cur_emo = edit_rec.emotion if edit_rec else ""
+                    emo_idx = emo_options.index(cur_emo) if cur_emo in emo_options else 0
+                    new_emotion = st.selectbox("情绪", emo_labels, index=emo_idx)
+                    new_album = st.text_input("专辑", value=edit_rec.album if edit_rec and edit_rec.album != "Unknown" else "")
+
+                saved = st.form_submit_button("💾 保存", type="primary")
+                if saved:
+                    fields = {}
+                    if new_lang:
+                        fields["language"] = new_lang
+                        fields["language_source"] = "manual"
+                    if new_genre:
+                        fields["genre"] = new_genre
+                    if new_album:
+                        fields["album"] = new_album
+                    emo_en = emo_options[emo_idx] if emo_idx > 0 else ""
+                    if emo_en:
+                        fields["emotion"] = emo_en
+                        fields["emotion_confidence"] = "manual"
+
+                    if fields:
+                        ok = lib_db.update_song_fields(edit_artist, edit_title, **fields)
+                        if ok:
+                            st.success(f"已更新 {edit_artist} - {edit_title}")
+                            # 同步更新内存中的 song 对象
+                            song_id = librarian._file_to_id(edit_rec.file_path) if edit_rec else None
+                            if song_id and song_id in librarian.songs:
+                                s = librarian.songs[song_id]
+                                if "language" in fields:
+                                    s.album = fields.get("album", s.album)
+                            st.session_state.lib_edit_song = None
+                            st.rerun()
+                        else:
+                            st.error("保存失败，请重试")
+                    else:
+                        st.warning("没有需要更新的字段")
+
+            if st.button("取消编辑"):
+                st.session_state.lib_edit_song = None
+                st.rerun()
+
+        # ── 加入歌单弹窗 ──
+        if st.session_state.get("lib_add_to_pl") is not None:
+            pl_artist, pl_title, pl_path = st.session_state.lib_add_to_pl
+            playlists = lib_db.list_playlists()
+            pl_names = [pl["name"] for pl in playlists]
+            st.divider()
+            st.subheader(f"➕ 加入歌单: {pl_artist} - {pl_title}")
+            if not pl_names:
+                st.info("还没有歌单，先去「智能歌单」页面创建一个吧")
+            else:
+                selected_pl = st.selectbox("选择歌单", pl_names, key="add_to_pl_select")
+                if st.button("确认加入", type="primary"):
+                    pl_id = next((pl["id"] for pl in playlists if pl["name"] == selected_pl), None)
+                    if pl_id:
+                        lib_db.add_song_to_playlist(pl_id, pl_artist, pl_title, pl_path)
+                        st.success(f"已加入「{selected_pl}」")
+                        st.session_state.lib_add_to_pl = None
+                        st.rerun()
+            if st.button("取消"):
+                st.session_state.lib_add_to_pl = None
+                st.rerun()
 
 # ============================================================
 # 整理页面
@@ -282,8 +509,15 @@ elif page == "智能歌单":
                 # 歌曲预览
                 if result["songs"]:
                     st.subheader(f"歌曲列表（前 20 首）")
+                    pl_id_new = result.get("id")
                     for s in result["songs"][:20]:
-                        st.write(f"- **{s['artist']}** — {s['title']}  `{s.get('genre', '')}`")
+                        c_s, c_b = st.columns([10, 1])
+                        with c_s:
+                            st.write(f"- **{s['artist']}** — {s['title']}  `{s.get('genre', '')}`")
+                        with c_b:
+                            if pl_id_new and st.button("✕", key=f"rm_new_{s['artist']}_{s['title']}"[:50], help="移除"):
+                                lib_db.remove_song_from_playlist(pl_id_new, s['artist'], s['title'])
+                                st.rerun()
 
     # --- Tab 2: 浏览 ---
     with tab2:
@@ -315,8 +549,14 @@ elif page == "智能歌单":
                         detail = playlist_engine.get_playlist(pl_id)
                         if detail and detail.get("songs"):
                             st.write("**歌曲列表:**")
-                            for s in detail["songs"][:10]:
-                                st.write(f"- {s['artist']} — {s['title']}")
+                            for s in detail["songs"][:20]:
+                                c_s, c_b = st.columns([10, 1])
+                                with c_s:
+                                    st.write(f"- {s['artist']} — {s['title']}")
+                                with c_b:
+                                    if st.button("✕", key=f"rm_{pl_id}_{s['artist']}_{s['title']}"[:50], help="移除"):
+                                        lib_db.remove_song_from_playlist(pl_id, s['artist'], s['title'])
+                                        st.rerun()
                     with col3:
                         if st.button("🗑️ 删除", key=f"del_{pl_id}"):
                             playlist_engine.delete_playlist(pl_id)

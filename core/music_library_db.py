@@ -417,6 +417,126 @@ class MusicLibraryDB:
             'lyrics_count': lyrics_count
         }
     
+    def list_artists(self) -> List[str]:
+        """返回所有不重复的艺术家名（排除 Unknown）。"""
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT artist FROM songs WHERE artist != 'Unknown' AND artist != '' ORDER BY artist"
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def list_albums(self) -> List[str]:
+        """返回所有不重复的专辑名（排除 Unknown）。"""
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT album FROM songs WHERE album != 'Unknown' AND album != '' ORDER BY album"
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def list_genres(self) -> List[str]:
+        """返回所有不重复的流派名。"""
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT genre FROM songs WHERE genre != '' ORDER BY genre"
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def list_languages(self) -> List[str]:
+        """返回所有不重复的语言标签。"""
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT language FROM songs WHERE language != '' ORDER BY language"
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def list_emotions(self) -> List[str]:
+        """返回所有不重复的情绪标签。"""
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT emotion FROM songs WHERE emotion != '' ORDER BY emotion"
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def filter_songs(
+        self,
+        artist: str = None,
+        album: str = None,
+        genre: str = None,
+        language: str = None,
+        emotion: str = None,
+        search: str = None,
+        sort_by: str = "artist",
+        limit: int = 500,
+    ) -> List[SongRecord]:
+        """多条件组合筛选歌曲。
+
+        Args:
+            artist: 精确匹配艺术家名
+            album: 精确匹配专辑名
+            genre: 精确匹配流派
+            language: 精确匹配语言
+            emotion: 精确匹配情绪
+            search: 模糊搜索（匹配 title 或 artist）
+            sort_by: 排序字段 (artist, title, album, year, play_count)
+            limit: 最大返回数
+        """
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        conditions = []
+        params = []
+
+        if artist:
+            conditions.append("artist = ?")
+            params.append(artist)
+        if album:
+            conditions.append("album = ?")
+            params.append(album)
+        if genre:
+            conditions.append("genre = ?")
+            params.append(genre)
+        if language:
+            conditions.append("language = ?")
+            params.append(language)
+        if emotion:
+            conditions.append("emotion = ?")
+            params.append(emotion)
+        if search:
+            conditions.append("(title LIKE ? OR artist LIKE ?)")
+            kw = f"%{search}%"
+            params.extend([kw, kw])
+
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        valid_sorts = {"artist", "title", "album", "year", "play_count"}
+        order = sort_by if sort_by in valid_sorts else "artist"
+
+        rows = conn.execute(
+            f"SELECT * FROM songs{where} ORDER BY {order} LIMIT ?",
+            params + [limit],
+        ).fetchall()
+        conn.close()
+        return [self._row_to_record(r) for r in rows]
+
+    def update_song_fields(self, artist: str, title: str, **fields) -> bool:
+        """更新一首歌的任意字段。
+
+        可更新的字段: language, emotion, genre, album, year, notes
+        例: update_song_fields('周杰伦', '晴天', language='国语', emotion='happy')
+        """
+        allowed = {"language", "emotion", "genre", "album", "year", "notes",
+                   "language_source", "emotion_confidence"}
+        updates = {k: v for k, v in fields.items() if k in allowed and v}
+        if not updates:
+            return False
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [artist, title]
+        with sqlite3.connect(self.db_file) as conn:
+            cur = conn.execute(
+                f"UPDATE songs SET {set_clause} WHERE artist = ? AND title = ?",
+                values,
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
     def export_to_csv(self) -> str:
         """导出为CSV文件（可用Excel编辑）"""
         try:
@@ -780,6 +900,44 @@ class MusicLibraryDB:
             )
             conn.commit()
         return True
+
+    def add_song_to_playlist(self, playlist_id: int, artist: str, title: str,
+                             file_path: str = "") -> bool:
+        """手动添加一首歌到歌单。"""
+        with sqlite3.connect(self.db_file) as conn:
+            # 获取当前最大 sort_order
+            row = conn.execute(
+                "SELECT MAX(sort_order) FROM smart_playlist_songs WHERE playlist_id = ?",
+                (playlist_id,)
+            ).fetchone()
+            next_order = (row[0] or 0) + 1
+            conn.execute(
+                """INSERT INTO smart_playlist_songs
+                   (playlist_id, file_path, artist, title, sort_order)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (playlist_id, file_path, artist, title, next_order),
+            )
+            conn.execute(
+                "UPDATE smart_playlists SET song_count = song_count + 1, updated_at = ? WHERE id = ?",
+                (datetime.now().isoformat(), playlist_id),
+            )
+            conn.commit()
+        return True
+
+    def remove_song_from_playlist(self, playlist_id: int, artist: str, title: str) -> bool:
+        """从歌单中移除一首歌。"""
+        with sqlite3.connect(self.db_file) as conn:
+            cur = conn.execute(
+                "DELETE FROM smart_playlist_songs WHERE playlist_id = ? AND artist = ? AND title = ?",
+                (playlist_id, artist, title),
+            )
+            if cur.rowcount > 0:
+                conn.execute(
+                    "UPDATE smart_playlists SET song_count = MAX(0, song_count - 1), updated_at = ? WHERE id = ?",
+                    (datetime.now().isoformat(), playlist_id),
+                )
+            conn.commit()
+            return cur.rowcount > 0
 
     def log_metadata_fix(self, file_path: str, fix_type: str, old_value: str = "",
                          new_value: str = "", status: str = "success", error_msg: str = ""):

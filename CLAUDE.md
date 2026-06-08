@@ -88,13 +88,6 @@ START → hermes_gateway → {librarian | organizer | metadata | respond}
 - **封面检测** — 使用 `LibrarianAgent.has_embedded_cover()`（按 FLAC/MP3/M4A 分别处理），不要用 `metadata_tools._has_embedded_cover` 的旧版本。
 - **元数据诊断** — 对 DB 中标记为 Unknown 的字段会直接从文件 tag 交叉校验，避免误报。
 
-## 已弃用文件（保留供参考，不在当前 graph 中）
-
-- `graph/nodes/intent_router.py` — 旧 L0-L4 四级路由（Hermes Gateway 已替代）
-- `graph/nodes/organizer_node.py` — 旧过程式节点（ReAct agent 已替代）
-- `graph/nodes/metadata_node.py` — 旧过程式节点（ReAct agent 已替代）
-- `chat/tool_registry.py` — 旧 32 工具 FC 注册表（4 agent dispatch 已替代）
-
 ## 依赖
 
 `langgraph` + `langchain-core`（图和 Agent 框架）、`chromadb`（向量库）、`mutagen`（音频元数据）、`sentence-transformers`（可选，不可用时回退 ChromaDB 默认 embedding）、`streamlit`（Web UI）、`watchdog`（文件监控）。

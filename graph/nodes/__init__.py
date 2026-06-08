@@ -16,7 +16,3 @@ __all__ = [
     "respond_node",
 ]
 
-# 已弃用（保留文件供参考）：
-#   graph/nodes/intent_router.py  — 旧 L0-L4 四级路由，Hermes Gateway 已替代
-#   graph/nodes/organizer_node.py — 旧过程式节点，organizer_agent.py 已替代
-#   graph/nodes/metadata_node.py  — 旧过程式节点，metadata_agent.py 已替代

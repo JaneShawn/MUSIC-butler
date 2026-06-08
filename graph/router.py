@@ -39,6 +39,7 @@ def route_by_intent(state) -> str:
         "fix_metadata_issues", "sync_emotion",
         "correct_emotion", "correct_language", "update_song_info",
         "detect_single_language", "analyze_single_emotion",
+        "convert",
     }:
         return "metadata"
 

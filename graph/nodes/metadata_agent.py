@@ -26,6 +26,10 @@ METADATA_SYSTEM_PROMPT = """你是元数据管理专家，负责维护音乐库�
    - 用户说「标记XX为韩语」→ update_song_tag(song_hint='XX', field='language', value='韩语')
    - 用户说「标记YY为快乐的歌」→ update_song_tag(song_hint='YY', field='emotion', value='快乐')
 5. **同步缓存**：用 sync_emotion_cache 工具将情绪缓存写入数据库
+6. **格式转换**：用 convert_audio 工具将 WAV/AIFF 转为 MP3 或 FLAC
+   - 用户说「转换格式」且未指定格式 → 先问要 MP3 还是 FLAC
+   - 用户说「转成MP3」「转flac」→ 直接 convert_audio(target_format='mp3/flac')
+   - 用户在回答格式选择时（如只回「mp3」「flac」「是」），直接调用 convert_audio
 
 工作流程：
 - 用户说「诊断元数据」→ diagnose_metadata
@@ -33,6 +37,7 @@ METADATA_SYSTEM_PROMPT = """你是元数据管理专家，负责维护音乐库�
 - 用户说「一键修复」→ fix_metadata_batch(dry_run=True) 先预览
 - 用户说「标记XX为YY」→ update_song_tag 纠正标签
 - 用户说「同步情绪」→ sync_emotion_cache
+- 用户说「转换格式」→ 追问格式或直接 convert_audio
 
 批量修复和危险操作必须先预览再执行。以中文回复，保持简洁清晰。"""
 
@@ -62,10 +67,32 @@ def metadata_agent_node(state: MusicAgentState) -> Dict[str, Any]:
             "agent_trace": trace + ["metadata: no input"],
         }
 
-    user_input = msg_content(messages[-1])
+    # 传递完整对话历史，让 ReAct agent 能看到自己上一轮说了什么
+    conversation = []
+    for m in messages:
+        role = m.get("role", "") if isinstance(m, dict) else getattr(m, "role", "")
+        mtype = m.get("type", "") if isinstance(m, dict) else getattr(m, "type", "")
+        content = msg_content(m)
+        if not content:
+            continue
+        if role == "user" or mtype == "human":
+            conversation.append(("user", content))
+        elif role == "assistant" or mtype == "ai":
+            conversation.append(("assistant", content))
+
+    # 确保最后一条是用户消息
+    if not conversation or conversation[-1][0] != "user":
+        conversation.append(("user", msg_content(messages[-1])))
+
+    # Gateway 提取的 target_format 注入给 agent
+    task_params = state.get("task_params", {}) or {}
+    target_format = task_params.get("target_format", "")
+    if target_format and conversation:
+        last_role, last_msg = conversation[-1]
+        conversation[-1] = (last_role, f"{last_msg}（目标格式: {target_format}）")
 
     agent = _get_agent()
-    result = agent.invoke({"messages": [("user", user_input)]})
+    result = agent.invoke({"messages": conversation})
 
     final_msgs = result.get("messages", [])
     assistant_reply = ""

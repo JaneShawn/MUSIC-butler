@@ -72,12 +72,6 @@ def respond_node(state: MusicAgentState) -> Dict[str, Any]:
         return {"final_response": "📥 导入音乐库：将 CSV 文件放入音乐库目录后执行「扫描」即可。",
                 "agent_trace": trace}
 
-    # 格式转换
-    if intent == "convert":
-        return {"final_response": "🔄 音频格式转换：支持 FLAC/WAV/APE → MP3。\n"
-                "将文件放入音乐库目录后，系统会自动检测并转换。",
-                "agent_trace": trace}
-
     # 确认操作提示
     if state.get("requires_confirmation"):
         return {

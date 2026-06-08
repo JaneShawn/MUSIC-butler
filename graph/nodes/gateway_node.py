@@ -47,6 +47,17 @@ def gateway_node(state: MusicAgentState) -> Dict[str, Any]:
             "agent_trace": ["gateway: 空输入"],
         }
 
+    # 提取上一轮 assistant 消息，作为路由上下文（解决用户简短回复误路由问题）
+    last_assistant = ""
+    for m in reversed(messages[:-1]):
+        role = m.get("role", "") if isinstance(m, dict) else getattr(m, "role", "")
+        mtype = m.get("type", "") if isinstance(m, dict) else getattr(m, "type", "")
+        if role == "assistant" or mtype == "ai":
+            content = msg_content(m)
+            if content and len(content) > 5:
+                last_assistant = content
+                break
+
     # ── 闭环反哺：查询记忆和技能 ──
     memory_context = ""
     skill_match = ""
@@ -62,7 +73,8 @@ def gateway_node(state: MusicAgentState) -> Dict[str, Any]:
 
     # 路由（Gateway 内部会先查 Skill 缓存，再走 LLM）
     gateway = _get_gateway()
-    decision = gateway.route(user_input, memory_context=memory_context)
+    decision = gateway.route(user_input, memory_context=memory_context,
+                             last_assistant=last_assistant)
 
     # 如果 Skill 命中，记录
     if decision.agent_trace.startswith("gateway(skill)"):

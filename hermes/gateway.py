@@ -81,9 +81,9 @@ GATEWAY_DISPATCH_SCHEMA = [
         "function": {
             "name": "dispatch_to_metadata",
             "description": (
-                "元数据修复、诊断、情绪/语言标签纠正、单曲分析。"
-                "用户想修复歌曲信息、诊断元数据问题、纠正标签时选此。"
-                "例如：'诊断元数据'、'修复晴天'、'标记BTS为韩语'、'同步情绪缓存'。"
+                "元数据修复、诊断、情绪/语言标签纠正、单曲分析、音频格式转换。"
+                "用户想修复歌曲信息、诊断元数据问题、纠正标签、转换音频格式时选此。"
+                "例如：'诊断元数据'、'修复晴天'、'标记BTS为韩语'、'同步情绪缓存'、'转换格式'。"
             ),
             "parameters": {
                 "type": "object",
@@ -93,12 +93,13 @@ GATEWAY_DISPATCH_SCHEMA = [
                         "description": (
                             "具体操作: diagnose, fix_single, fix_metadata, fix_metadata_issues, "
                             "sync_emotion, correct_emotion, correct_language, update_song_info, "
-                            "detect_single_language, analyze_single_emotion"
+                            "detect_single_language, analyze_single_emotion, convert"
                         ),
                     },
                     "song_hint": {"type": "string", "description": "歌曲名或关键词"},
                     "field": {"type": "string", "description": "要更新的字段: language/emotion/genre/artist/album"},
                     "value": {"type": "string", "description": "新值"},
+                    "target_format": {"type": "string", "description": "转换目标格式: mp3 或 flac（用户指定时提取）"},
                     "reasoning": {"type": "string", "description": "为什么选择 metadata agent"},
                 },
                 "required": ["intent", "reasoning"],
@@ -120,7 +121,7 @@ GATEWAY_DISPATCH_SCHEMA = [
                         "type": "string",
                         "description": (
                             "具体操作: help, exit, clear, cancel, list_playlists, "
-                            "list_models, switch_model, current_model, convert, "
+                            "list_models, switch_model, current_model, "
                             "export_library, import_library, greeting, chitchat"
                         ),
                     },
@@ -199,13 +200,15 @@ class HermesGateway:
             self._kimi = KimiClient(config=load_config())
         return self._kimi
 
-    def route(self, user_input: str, memory_context: str = "", skill_match: str = "") -> RouteDecision:
+    def route(self, user_input: str, memory_context: str = "", skill_match: str = "",
+              last_assistant: str = "") -> RouteDecision:
         """解析用户输入，返回分发决策。
 
         Args:
             user_input: 用户输入文本
             memory_context: 从 MemoryStore 查询到的相关记忆（可选）
             skill_match: 从 SkillStore 匹配到的技能名（可选）
+            last_assistant: 上一轮助手的回复内容，用于理解上下文（如 agent 刚问了格式选择）
         """
         stripped = user_input.strip()
 
@@ -235,7 +238,7 @@ class HermesGateway:
 
         # 主路径: LLM Function Calling
         try:
-            return self._llm_route(user_input, memory_context)
+            return self._llm_route(user_input, memory_context, last_assistant)
         except Exception:
             return RouteDecision(
                 target_agent="respond",
@@ -245,8 +248,9 @@ class HermesGateway:
                 agent_trace="gateway(fallback): respond",
             )
 
-    def _llm_route(self, user_input: str, memory_context: str = "") -> RouteDecision:
-        """调用 LLM 进行 agent 级路由。注入记忆上下文辅助决策。"""
+    def _llm_route(self, user_input: str, memory_context: str = "",
+                   last_assistant: str = "") -> RouteDecision:
+        """调用 LLM 进行 agent 级路由。注入记忆和对话上下文辅助决策。"""
         kimi = self._get_kimi()
 
         system_prompt = (
@@ -254,18 +258,24 @@ class HermesGateway:
             "可用的 Agent：\n"
             "  - librarian: 音乐库搜索、查询、播放、统计、情绪分析\n"
             "  - organizer: 文件整理、去重、目录分析\n"
-            "  - metadata: 元数据修复、诊断、标签纠正\n"
+            "  - metadata: 元数据修复、诊断、标签纠正、格式转换\n"
             "  - respond: 直接文本回复（闲聊、帮助、设置等）\n\n"
             "规则：\n"
             "1. 用户有明确业务操作意图 → 分发给对应 agent\n"
             "2. 用户只是闲聊/问功能 → respond_directly\n"
             "3. 不确定时宁可 respond_directly 也不要猜\n"
-            "4. reasoning 字段用中文写一句简短理由"
+            "4. reasoning 字段用中文写一句简短理由\n"
+            "5. 重要：如果上一轮助手问了选择题（如'MP3还是FLAC'），用户回复的简短答案"
+            "（如'flac'、'mp3'、'是'、'好的'）应视为对上轮操作的确认，分发给上轮对应的 agent"
         )
 
         # 注入记忆上下文
         if memory_context:
             system_prompt += f"\n\n[用户偏好记忆]\n{memory_context}"
+
+        # 注入对话上下文：上一轮 agent 说了什么
+        if last_assistant:
+            system_prompt += f"\n\n[上一轮助手说了]\n{last_assistant}"
 
         messages = [
             {"role": "system", "content": system_prompt},

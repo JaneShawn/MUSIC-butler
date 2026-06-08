@@ -302,6 +302,47 @@ def update_song_tag(song_hint: str, field: str, value: str) -> str:
     return json.dumps({"error": f"不支持的字段 '{field}'，只支持 emotion 和 language。"}, ensure_ascii=False)
 
 
+@tool
+def convert_audio(target_format: str) -> str:
+    """将音乐库中的 WAV/AIFF 无损文件批量转换为 MP3 或 FLAC。
+    target_format 为 'mp3' 或 'flac'。调用前须先询问用户要哪种格式。
+    返回扫描与转换结果统计（JSON格式）。"""
+    from core.audio_converter import AudioConverter
+    from graph.utils import load_config
+
+    target_format = target_format.lower().strip()
+    if target_format not in ("mp3", "flac"):
+        return json.dumps({"error": f"不支持的格式 '{target_format}'，只支持 mp3 和 flac。"}, ensure_ascii=False)
+
+    config = load_config()
+    lib_path = config.get("library", {}).get("path", "")
+    if not lib_path:
+        return json.dumps({"error": "未配置音乐库路径"}, ensure_ascii=False)
+
+    converter = AudioConverter()
+    if not converter.check_ffmpeg():
+        return json.dumps({
+            "error": "FFmpeg 未安装",
+            "help": "安装方法: winget install Gyan.FFmpeg 或下载 https://github.com/BtbN/FFmpeg-Builds/releases",
+        }, ensure_ascii=False)
+
+    files = converter.scan_convertible_files(lib_path)
+    if not files:
+        return json.dumps({"message": "没有找到可转换的文件（WAV/AIFF）。"}, ensure_ascii=False)
+
+    tasks = converter.generate_conversion_plan(files, output_format=f".{target_format}")
+    result = converter.batch_convert(tasks)
+
+    return json.dumps({
+        "target_format": target_format,
+        "total": result["total"],
+        "success": result["success"],
+        "failed": result["failed"],
+        "message": f"转换完成：{result['success']}/{result['total']} 成功"
+                   + (f"，{result['failed']} 失败" if result["failed"] else ""),
+    }, ensure_ascii=False)
+
+
 # ── 工具集 ─────────────────────────────────────────────────
 
 METADATA_TOOLS = [
@@ -310,4 +351,5 @@ METADATA_TOOLS = [
     fix_metadata_batch,
     sync_emotion_cache,
     update_song_tag,
+    convert_audio,
 ]

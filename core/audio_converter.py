@@ -154,13 +154,20 @@ FFmpeg 是必需的音频处理工具。
         target.parent.mkdir(parents=True, exist_ok=True)
         
         # 构建 ffmpeg 命令
+        ext = target.suffix.lower()
+        if ext == '.flac':
+            codec_opts = ['-c:a', 'flac', '-compression_level', '5']
+        elif ext == '.mp3':
+            codec_opts = ['-c:a', 'libmp3lame', '-q:a', '2']
+        else:
+            codec_opts = ['-c:a', 'flac', '-compression_level', '5']
+
         cmd = [
             self.ffmpeg_path,
-            '-i', str(source),           # 输入文件
-            '-y',                         # 覆盖输出文件
-            '-map_metadata', '0',         # 保留元数据
-            '-c:a', 'flac',               # 使用 FLAC 编码
-            '-compression_level', '5',    # 压缩级别（0-12，5是平衡）
+            '-i', str(source),
+            '-y',
+            '-map_metadata', '0',
+            *codec_opts,
             str(target)
         ]
         

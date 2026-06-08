@@ -6,6 +6,8 @@ chat_unified.py 只负责：接收用户输入 → 传给 graph → 输出响应
 
 [Phase 1] Hermes Trigger 层：使用 ChatTrigger 标准化用户输入。
 """
+from typing import cast
+from langchain_core.runnables import RunnableConfig
 import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -119,7 +121,7 @@ class MusicAgentChat:
         # Hermes Trigger 层：标准化输入为 TriggerEvent
         event = self.trigger.normalize(user_input)
 
-        config = {"configurable": {"thread_id": self.thread_id}}
+        config = cast(RunnableConfig, {"configurable": {"thread_id": self.thread_id}})
 
         result = self.graph.invoke(
             {"messages": [HumanMessage(content=event.content)]},
@@ -140,7 +142,7 @@ class MusicAgentChat:
 
     def stream(self, user_input: str):
         """流式输出，展示 Agent 执行轨迹。"""
-        config = {"configurable": {"thread_id": self.thread_id}}
+        config = cast(RunnableConfig, {"configurable": {"thread_id": self.thread_id}})
 
         for event in self.graph.stream(
             {"messages": [HumanMessage(content=user_input)]},

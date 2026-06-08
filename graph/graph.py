@@ -8,6 +8,7 @@
   闭环: Reflect 提取的记忆/技能反哺下一次 Gateway 路由。
 """
 from langgraph.graph import StateGraph, START, END
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from graph.state import MusicAgentState
@@ -22,7 +23,7 @@ from graph.nodes import (
 from graph.router import route_by_intent
 
 
-def build_graph() -> StateGraph:
+def build_graph() -> CompiledStateGraph:
     """构建并编译 Music Agent 多Agent 图"""
 
     workflow = StateGraph(MusicAgentState)

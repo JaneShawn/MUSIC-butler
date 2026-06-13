@@ -22,12 +22,9 @@ from graph.nodes import (
 )
 from graph.router import route_by_intent
 
-
 def build_graph() -> CompiledStateGraph:
     """构建并编译 Music Agent 多Agent 图"""
-
     workflow = StateGraph(MusicAgentState)
-
     # 注册节点
     workflow.add_node("hermes_gateway", gateway_node)
     workflow.add_node("librarian", librarian_node)

@@ -2,7 +2,7 @@
 """
 Hermes Gateway 节点 — 将 HermesGateway 接入 LangGraph
 
-替代旧 intent_router 的 L0-L4 四级路由，采用纯 LLM Function Calling 决策。
+采用纯 LLM Function Calling 决策。
 
 [Phase 4] 路由前查询 Memory + Skill 注入上下文，实现闭环反哺。
 """
